@@ -1,4 +1,5 @@
 name: CI (testing) - Test, Build & Push
+
 on:
   push:
     branches: [ testing ]
@@ -8,6 +9,9 @@ on:
       - ".github/workflows/ci-testing.yml"
 
 jobs:
+  # -------------------------------
+  # Job 1: run backend tests
+  # -------------------------------
   test_and_build:
     runs-on: ubuntu-latest
     container: python:3.10
@@ -19,6 +23,7 @@ jobs:
           POSTGRES_DB: productdb
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]   # expose to runner host
         options: >-
           --health-cmd="pg_isready -U postgres"
           --health-interval=10s
@@ -31,6 +36,7 @@ jobs:
           POSTGRES_DB: orderdb
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
+        ports: ["5433:5432"]   # expose to runner host
         options: >-
           --health-cmd="pg_isready -U postgres"
           --health-interval=10s
@@ -43,6 +49,7 @@ jobs:
           POSTGRES_DB: customerdb
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
+        ports: ["5434:5432"]   # expose to runner host
         options: >-
           --health-cmd="pg_isready -U postgres"
           --health-interval=10s
@@ -52,7 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Python deps (all services)
+      - name: Install Python deps (base + dev for all services)
         shell: bash
         run: |
           python -m pip install --upgrade pip
@@ -66,77 +73,75 @@ jobs:
           apt-get update
           apt-get install -y postgresql-client
 
-      - name: Resolve mapped ports and wait for DBs
-        run: |
-          # Mapped ports for each service (on the runner host)
-          export P_PRODUCT=${{ job.services.product_db.ports[5432] }}
-          export P_ORDER=${{ job.services.order_db.ports[5432] }}
-          export P_CUSTOMER=${{ job.services.customer_db.ports[5432] }}
-
-          echo "product_db -> localhost:${P_PRODUCT}"
-          echo "order_db    -> localhost:${P_ORDER}"
-          echo "customer_db -> localhost:${P_CUSTOMER}"
-
-          # Wait until all are ready
-          for i in {1..60}; do
-            pg_isready -h 127.0.0.1 -p "${P_PRODUCT}"   >/dev/null 2>&1 && \
-            pg_isready -h 127.0.0.1 -p "${P_ORDER}"     >/dev/null 2>&1 && \
-            pg_isready -h 127.0.0.1 -p "${P_CUSTOMER}"  >/dev/null 2>&1 && exit 0
-            sleep 2
-          done
-          echo "Postgres services not ready in time" && exit 1
-
       - name: Wait for Postgres services to be ready
         shell: bash
         run: |
-          for i in {1..60}; do
-            pg_isready -h product_db -U postgres >/dev/null 2>&1 && \
-            pg_isready -h order_db   -U postgres >/dev/null 2>&1 && \
-            pg_isready -h customer_db -U postgres >/dev/null 2>&1 && exit 0
-            sleep 2
+          # Wait for each published host port
+          for port in 5432 5433 5434; do
+            echo "Waiting for Postgres at localhost:$port..."
+            ready=0
+            for i in {1..60}; do
+              if pg_isready -h 127.0.0.1 -p "$port" >/dev/null 2>&1; then
+                echo "Postgres ready on $port"
+                ready=1
+                break
+              fi
+              sleep 2
+            done
+            [ $ready -eq 1 ] || { echo "Postgres not ready on $port in time"; exit 1; }
           done
-          echo "Postgres services not ready in time" && exit 1
 
-      - name: Install deps & run backend tests (skip if none)
+      - name: Run backend tests
+        shell: bash
         run: |
           set -e
-          python -m pip install --upgrade pip
-          # install base + dev requirements per service
           for svc in product_service order_service customer_service; do
-            if [ -f backend/$svc/requirements.txt ]; then pip install -r backend/$svc/requirements.txt || true; fi
-            if [ -f backend/$svc/requirements-dev.txt ]; then pip install -r backend/$svc/requirements-dev.txt || true; fi
-
-            # Pick the correct DB URL using mapped ports
-            if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:${P_PRODUCT}/productdb"
-            elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:${P_ORDER}/orderdb"
-            elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:${P_CUSTOMER}/customerdb"
+            # Build the correct DB URL for each service (match the ports we exposed)
+            if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:5432/productdb"
+            elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:5433/orderdb"
+            elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:5434/customerdb"
             fi
 
             if [ -d backend/$svc/tests ]; then
               echo "Running tests in $svc using $DBURL"
-              DATABASE_URL="$DBURL" pytest backend/$svc/tests || (echo "Tests failed in $svc" && exit 1)
+              DATABASE_URL="$DBURL" pytest backend/$svc/tests
             else
               echo "No tests for $svc – skipping"
             fi
           done
+
+  # -------------------------------------------
+  # Job 2: build and push images to ACR (only if tests pass)
+  # -------------------------------------------
+  push_images:
+    runs-on: ubuntu-latest
+    needs: test_and_build
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Azure login (SP)
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: ACR login
+      - name: ACR login and derive vars
+        shell: bash
         run: |
           az acr login --name ${{ secrets.ACR_NAME }}
           echo "ACR_LOGIN_SERVER=$(az acr show -n ${{ secrets.ACR_NAME }} --query loginServer -o tsv)" >> $GITHUB_ENV
           echo "IMAGE_TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV
 
       - name: Build & push images (backends + frontend)
+        shell: bash
         run: |
+          set -e
           for image in product_service order_service customer_service frontend; do
-            docker build -t $ACR_LOGIN_SERVER/$image:$IMAGE_TAG $( [[ "$image" == "frontend" ]] && echo frontend || echo backend/$image )
+            CONTEXT=$( [[ "$image" == "frontend" ]] && echo frontend || echo backend/$image )
+            docker build -t $ACR_LOGIN_SERVER/$image:$IMAGE_TAG "$CONTEXT"
             docker push $ACR_LOGIN_SERVER/$image:$IMAGE_TAG
-            # also tag latest for staging
-            docker tag $ACR_LOGIN_SERVER/$image:$IMAGE_TAG $ACR_LOGIN_SERVER/$image:latest
+
+            # also tag and push 'latest' (useful for staging)
+            docker tag  $ACR_LOGIN_SERVER/$image:$IMAGE_TAG $ACR_LOGIN_SERVER/$image:latest
             docker push $ACR_LOGIN_SERVER/$image:latest
           done
