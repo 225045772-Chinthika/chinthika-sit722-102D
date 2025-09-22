@@ -107,7 +107,6 @@ jobs:
       #       fi
       #     done
 
-
       - name: Run backend tests
         shell: bash
         env:
@@ -117,7 +116,10 @@ jobs:
         run: |
           set -e
 
-          # map service -> host and db name (matches your services:)
+          # silence FastAPI / library deprecations in CI
+          printf "[pytest]\nfilterwarnings =\n    ignore::DeprecationWarning\n" > pytest.ini
+
+          # map service -> host and db
           declare -A HOSTS=( \
             ["product_service"]=product_db \
             ["order_service"]=order_db \
@@ -129,15 +131,15 @@ jobs:
             ["customer_service"]=customerdb \
           )
 
+          python -m pip install --quiet pytest
+
           for svc in product_service order_service customer_service; do
             export POSTGRES_HOST="${HOSTS[$svc]}"
             export POSTGRES_DB="${DBNAMES[$svc]}"
-
             echo "Running tests in $svc against $POSTGRES_HOST/$POSTGRES_DB ..."
-            # ensure pytest is available even if not in requirements-dev.txt
-            python -m pip install --quiet pytest
             pytest -q "backend/$svc/tests"
           done
+
 
   push_images:
     runs-on: ubuntu-latest
