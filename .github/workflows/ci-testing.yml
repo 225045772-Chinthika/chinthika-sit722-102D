@@ -85,61 +85,43 @@ jobs:
             done
           done
 
-      # - name: Run backend tests
-      #   shell: bash
-      #   run: |
-      #     set -euo pipefail
-
-      #     for svc in product_service order_service customer_service; do
-      #       # Pick correct DB URL for each service (use service hostnames)
-      #       if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@product_db:5432/productdb"
-      #       elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@order_db:5432/orderdb"
-      #       elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@customer_db:5432/customerdb"
-      #       else
-      #         echo "Unknown service $svc"; exit 1
-      #       fi
-
-      #       if [ -d "backend/$svc/tests" ]; then
-      #         echo "Running tests in $svc using $DBURL"
-      #         DATABASE_URL="$DBURL" pytest "backend/$svc/tests"
-      #       else
-      #         echo "No tests for $svc – skipping"
-      #       fi
-      #     done
-
       - name: Run backend tests
         shell: bash
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_PORT: 5432
         run: |
-          set -e
-
-          # silence FastAPI / library deprecations in CI
-          printf "[pytest]\nfilterwarnings =\n    ignore::DeprecationWarning\n" > pytest.ini
-
-          # map service -> host and db
-          declare -A HOSTS=( \
-            ["product_service"]=product_db \
-            ["order_service"]=order_db \
-            ["customer_service"]=customer_db \
-          )
-          declare -A DBNAMES=( \
-            ["product_service"]=productdb \
-            ["order_service"]=orderdb \
-            ["customer_service"]=customerdb \
-          )
-
-          python -m pip install --quiet pytest
+          set -euo pipefail
 
           for svc in product_service order_service customer_service; do
-            export POSTGRES_HOST="${HOSTS[$svc]}"
-            export POSTGRES_DB="${DBNAMES[$svc]}"
-            echo "Running tests in $svc against $POSTGRES_HOST/$POSTGRES_DB ..."
-            pytest -q "backend/$svc/tests"
-          done
+            # Build the correct DB URL per service (use service hostnames, not localhost)
+            if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@product_db:5432/productdb"
+            elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@order_db:5432/orderdb"
+            elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@customer_db:5432/customerdb"
+            else
+              echo "Unknown service $svc"; exit 1
+            fi
 
+            if [ -d "backend/$svc/tests" ]; then
+              echo "Running tests in $svc using $DBURL"
+
+              # --- Important: cover all likely config paths used by tests/app ---
+              # App-style envs
+              export DATABASE_URL="$DBURL"
+              export TEST_DATABASE_URL="$DBURL"
+              export SQLALCHEMY_DATABASE_URI="$DBURL"
+
+              # Also set standard libpq envs in case the code relies on them
+              # (they are ignored if the code explicitly sets host/port, but harmless)
+              if   [ "$svc" = "product_service"  ]; then PGHOST="product_db";   PGDATABASE="productdb"
+              elif [ "$svc" = "order_service"    ]; then PGHOST="order_db";     PGDATABASE="orderdb"
+              else                                     PGHOST="customer_db"; PGDATABASE="customerdb"
+              fi
+              export PGHOST PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres PGDATABASE
+
+              # Now run the tests
+              pytest "backend/$svc/tests"
+            else
+              echo "No tests for $svc – skipping"
+            fi
+          done
 
   push_images:
     runs-on: ubuntu-latest
