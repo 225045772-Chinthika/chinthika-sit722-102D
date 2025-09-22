@@ -3,3 +3,5 @@ uvicorn
 sqlalchemy
 psycopg2-binary
 pydantic[email]
+httpx>=0.24
+pytest>=7.0
