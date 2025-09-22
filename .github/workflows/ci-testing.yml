@@ -49,38 +49,29 @@ jobs:
       - name: Install deps & run backend tests (skip if none)
         run: |
           set -e
-
           python -m pip install --upgrade pip
-
-          # Optional: wait briefly for DB health (extra-safe even with health checks)
-          sleep 10
+          sleep 15  # small wait to give Postgres containers time to accept connections
 
           for svc in product_service order_service customer_service; do
             echo "---- $svc ----"
 
-            # Install base requirements (if any)
-            if [ -f backend/$svc/requirements.txt ]; then
-              pip install -r backend/$svc/requirements.txt || true
-            fi
+            # base + dev deps
+            [ -f backend/$svc/requirements.txt ] && pip install -r backend/$svc/requirements.txt || true
+            [ -f backend/$svc/requirements-dev.txt ] && pip install -r backend/$svc/requirements-dev.txt || true
 
-            # Install dev/test requirements (httpx etc.)
-            if [ -f backend/$svc/requirements-dev.txt ]; then
-              pip install -r backend/$svc/requirements-dev.txt || true
-            fi
-
-            # Set DATABASE_URL per service so tests connect to the service container, not localhost
+            # Compose the correct DB URL for each service
             if [ "$svc" = "product_service" ]; then
-              export DATABASE_URL="postgresql://postgres:postgres@product_db:5432/productdb"
+              DBURL="postgresql://postgres:postgres@product_db:5432/productdb"
             elif [ "$svc" = "order_service" ]; then
-              export DATABASE_URL="postgresql://postgres:postgres@order_db:5432/orderdb"
+              DBURL="postgresql://postgres:postgres@order_db:5432/orderdb"
             else
-              export DATABASE_URL="postgresql://postgres:postgres@customer_db:5432/customerdb"
+              DBURL="postgresql://postgres:postgres@customer_db:5432/customerdb"
             fi
 
-            # Run tests if present
+            # Run tests *with* the env var applied inline so pytest definitely sees it
             if [ -d backend/$svc/tests ]; then
-              echo "Running tests in $svc with DATABASE_URL=$DATABASE_URL"
-              pytest backend/$svc/tests || (echo "Tests failed in $svc" && exit 1)
+              echo "Running tests in $svc using $DBURL"
+              DATABASE_URL="$DBURL" pytest backend/$svc/tests || (echo "Tests failed in $svc" && exit 1)
             else
               echo "No tests for $svc – skipping"
             fi
