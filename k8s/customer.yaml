@@ -13,7 +13,7 @@ spec:
     spec:
       containers:
       - name: customer-service
-        image: sit722prodacr.azurecr.io/customer-service:latest
+        image: ${ACR_NAME}.azurecr.io/customer-service:latest
         imagePullPolicy: IfNotPresent
         ports: [{ containerPort: 8000 }]
 ---

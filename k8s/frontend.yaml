@@ -13,7 +13,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: sit722prodacr.azurecr.io/frontend:latest
+        image: ${ACR_NAME}.azurecr.io/frontend:latest
         imagePullPolicy: IfNotPresent
         ports: [{ containerPort: 80 }]
 ---
