@@ -144,7 +144,7 @@ jobs:
           az aks create -g "$STG_RG" -n "$STG_AKS" \
             --node-count 1 \
             --node-vm-size Standard_D2s_v3 \
-            --tier DevTest \
+            --tier free \
             --enable-managed-identity \
             --generate-ssh-keys \
             -o table
