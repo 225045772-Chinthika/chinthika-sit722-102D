@@ -2,7 +2,7 @@
 FROM node:18-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 COPY . .
 # If Vite/React/Next differs, keep the equivalent build cmd:
 RUN npm run build
