@@ -17,12 +17,12 @@ spec:
     spec:
       containers:
       - name: order-service
-        image: <ACR_LOGIN_SERVER>/order_service:latest
+        image: sit722prodacr.azurecr.io/order_service:latest
         imagePullPolicy: IfNotPresent
         ports: [{ containerPort: 8000 }]
         env:
         - { name: DATABASE_URL, value: postgresql://postgres:postgres@order-db:5432/orderdb }
-        - { name: RABBITMQ_HOST, valueFrom: { configMapKeyRef: { name: app-config, key: ORDER_SERVICE_URL }}} # not used by app? keep only if needed
+        - { name: RABBITMQ_HOST, valueFrom: { configMapKeyRef: { name: app-config, key: RABBITMQ_HOST }}} 
         - { name: AZURE_STORAGE_CONTAINER, valueFrom: { configMapKeyRef: { name: app-config, key: AZURE_STORAGE_CONTAINER }}}
         - { name: AZURE_STORAGE_ACCOUNT_NAME, valueFrom: { secretKeyRef: { name: app-secrets, key: AZURE_STORAGE_ACCOUNT_NAME }}}
         - { name: AZURE_STORAGE_ACCOUNT_KEY,  valueFrom: { secretKeyRef: { name: app-secrets, key: AZURE_STORAGE_ACCOUNT_KEY }}}

@@ -7,3 +7,4 @@ data:
   ORDER_SERVICE_URL: http://order-service:8000
   CUSTOMER_SERVICE_URL: http://customer-service:8000
   AZURE_STORAGE_CONTAINER: product-images
+  RABBITMQ_HOST: rabbitmq

@@ -17,5 +17,5 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: <ACR_LOGIN_SERVER>/frontend:latest
+        image: sit722prodacr.azurecr.io/frontend:latest
         ports: [{ containerPort: 80 }]

@@ -31,8 +31,8 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@product_db:5432/productdb
       RABBITMQ_HOST: rabbitmq
-      AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-dev}
-      AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-dev}
+      AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME}
+      AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY}
       AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-product-images}
     ports: ["8000:8000"]
     depends_on: [product_db, rabbitmq]
