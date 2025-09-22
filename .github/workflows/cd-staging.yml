@@ -1,96 +1,137 @@
-name: CD - staging (ephemeral AKS)
+# name: CD - staging (ephemeral AKS)
 
+# on:
+#   workflow_run:
+#     workflows: ["CI - test, build, push (testing)"]
+#     types: [completed]
+#   workflow_dispatch:
+
+# env:
+#   LOCATION: ${{ secrets.LOCATION || 'australiaeast' }}
+#   ACR_NAME: ${{ secrets.ACR_NAME }}
+#   ACR: ${{ secrets.ACR_NAME }}.azurecr.io
+#   # Use the exact commit from the CI run that triggered this workflow:
+#   COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+
+# jobs:
+#   deploy_staging:
+#     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - name: Azure login
+#         uses: azure/login@v2
+#         with:
+#           creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+#       - name: Show Azure context
+#         run: |
+#           az account show -o table
+#           echo "Using LOCATION=${{ env.LOCATION }}"
+#           echo "Using ACR=${{ env.ACR }}"
+
+#       - name: Create staging RG + AKS, attach ACR
+#         id: infra
+#         run: |
+#           set -e
+#           STG_RG="sit722-stg-rg-${{ github.run_id }}"
+#           STG_AKS="sit722-stg-aks-${{ github.run_id }}"
+#           echo "STG_RG=$STG_RG"   | tee -a $GITHUB_ENV
+#           echo "STG_AKS=$STG_AKS" | tee -a $GITHUB_ENV
+
+#           echo "Creating RG: $STG_RG in ${{ env.LOCATION }}"
+#           az group create -n "$STG_RG" -l "${{ env.LOCATION }}" -o table
+#           az aks create -g "$STG_RG" -n "$STG_AKS" --node-count 1 --enable-managed-identity --generate-ssh-keys -o table
+ 
+#           echo "Attaching ACR: ${{ env.ACR_NAME }}"          
+#           az aks update  -g "$STG_RG" -n "$STG_AKS" --attach-acr "$ACR_NAME"
+
+#       - name: Set kubectl context (staging)
+#         run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --attach-acr "${{ env.ACR_NAME }}" -o table
+
+#       - name: Verify staging RG exists
+#         run: |
+#           az group show -n "$STG_RG" -o table
+#           echo "Listing resources in $STG_RG"
+#           az resource list -g "$STG_RG" -o table || true
+
+#       - name: Set kubectl context (staging)
+#         run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --overwrite-existing
+
+#       - name: Apply namespace + config + dummy secret
+#         run: |
+#           kubectl apply -f k8s/namespace.yaml
+#           kubectl apply -f k8s/configmaps.yaml
+#           kubectl delete secret app-secrets -n sit722 --ignore-not-found
+#           kubectl create secret generic app-secrets -n sit722 \
+#             --from-literal=AZURE_STORAGE_ACCOUNT_KEY=dummy-staging-key
+
+#       - name: Deploy manifests with images from CI commit
+#         run: |
+#           # Apply base manifests
+#           kubectl apply -f k8s/product.yaml
+#           kubectl apply -f k8s/order.yaml
+#           kubectl apply -f k8s/customer.yaml
+#           kubectl apply -f k8s/frontend.yaml
+
+#           # Pin to images built in Stage 1 (by commit SHA)
+#           kubectl set image deploy/product-deploy  -n sit722 product-service=${{ env.ACR }}/product-service:${{ env.COMMIT_SHA }}
+#           kubectl set image deploy/order-deploy    -n sit722 order-service=${{ env.ACR }}/order-service:${{ env.COMMIT_SHA }}
+#           kubectl set image deploy/customer-deploy -n sit722 customer-service=${{ env.ACR }}/customer-service:${{ env.COMMIT_SHA }}
+#           kubectl set image deploy/frontend-deploy -n sit722 frontend=${{ env.ACR }}/frontend:${{ env.COMMIT_SHA }}
+
+#       - name: Smoke test product endpoint
+#         run: |
+#           set -e
+#           for i in {1..30}; do
+#             PIP=$(kubectl get svc -n sit722 product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+#             [ -n "$PIP" ] && break || sleep 10
+#           done
+#           echo "Product service IP: $PIP"
+#           curl -fsS "http://$PIP:8000/" | head -n1
+
+      # - name: Destroy staging RG
+      #   if: always()
+      #   run: az group delete -n "$STG_RG" --yes --no-wait
+
+
+
+
+name: CD - staging (ephemeral)
 on:
   workflow_run:
     workflows: ["CI - test, build, push (testing)"]
     types: [completed]
-  workflow_dispatch:
-
-env:
-  LOCATION: ${{ secrets.LOCATION || 'australiaeast' }}
-  ACR_NAME: ${{ secrets.ACR_NAME }}
-  ACR: ${{ secrets.ACR_NAME }}.azurecr.io
-  # Use the exact commit from the CI run that triggered this workflow:
-  COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
-
 jobs:
   deploy_staging:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Show Azure context
+      - uses: azure/login@v2
+        with: { creds: ${{ secrets.AZURE_CREDENTIALS }} }
+      - name: Create staging RG & AKS
         run: |
-          az account show -o table
-          echo "Using LOCATION=${{ env.LOCATION }}"
-          echo "Using ACR=${{ env.ACR }}"
-
-      - name: Create staging RG + AKS, attach ACR
-        id: infra
-        run: |
-          set -e
           STG_RG="sit722-stg-rg-${{ github.run_id }}"
           STG_AKS="sit722-stg-aks-${{ github.run_id }}"
-          echo "STG_RG=$STG_RG"   | tee -a $GITHUB_ENV
-          echo "STG_AKS=$STG_AKS" | tee -a $GITHUB_ENV
-
-          echo "Creating RG: $STG_RG in ${{ env.LOCATION }}"
-          az group create -n "$STG_RG" -l "${{ env.LOCATION }}" -o table
-          az aks create -g "$STG_RG" -n "$STG_AKS" --node-count 1 --enable-managed-identity --generate-ssh-keys -o table
- 
-          echo "Attaching ACR: ${{ env.ACR_NAME }}"          
-          az aks update  -g "$STG_RG" -n "$STG_AKS" --attach-acr "$ACR_NAME"
-
-      - name: Set kubectl context (staging)
-        run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --attach-acr "${{ env.ACR_NAME }}" -o table
-
-      - name: Verify staging RG exists
+          az group create -n $STG_RG -l ${{ secrets.LOCATION || 'australiaeast' }}
+          az aks create -g $STG_RG -n $STG_AKS --node-count 1 --generate-ssh-keys
+          az aks update -g $STG_RG -n $STG_AKS --attach-acr ${{ secrets.ACR_NAME }}
+          echo "STG_RG=$STG_RG" >> $GITHUB_ENV
+          echo "STG_AKS=$STG_AKS" >> $GITHUB_ENV
+      - name: Set kubectl context
+        run: az aks get-credentials -g $STG_RG -n $STG_AKS --overwrite-existing
+      - name: Deploy manifests
         run: |
-          az group show -n "$STG_RG" -o table
-          echo "Listing resources in $STG_RG"
-          az resource list -g "$STG_RG" -o table || true
-
-      - name: Set kubectl context (staging)
-        run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --overwrite-existing
-
-      - name: Apply namespace + config + dummy secret
-        run: |
-          kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/configmaps.yaml
-          kubectl delete secret app-secrets -n sit722 --ignore-not-found
-          kubectl create secret generic app-secrets -n sit722 \
-            --from-literal=AZURE_STORAGE_ACCOUNT_KEY=dummy-staging-key
-
-      - name: Deploy manifests with images from CI commit
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s # or per-file in dependency order
+      - name: Wait & smoke test
         run: |
-          # Apply base manifests
-          kubectl apply -f k8s/product.yaml
-          kubectl apply -f k8s/order.yaml
-          kubectl apply -f k8s/customer.yaml
-          kubectl apply -f k8s/frontend.yaml
-
-          # Pin to images built in Stage 1 (by commit SHA)
-          kubectl set image deploy/product-deploy  -n sit722 product-service=${{ env.ACR }}/product-service:${{ env.COMMIT_SHA }}
-          kubectl set image deploy/order-deploy    -n sit722 order-service=${{ env.ACR }}/order-service:${{ env.COMMIT_SHA }}
-          kubectl set image deploy/customer-deploy -n sit722 customer-service=${{ env.ACR }}/customer-service:${{ env.COMMIT_SHA }}
-          kubectl set image deploy/frontend-deploy -n sit722 frontend=${{ env.ACR }}/frontend:${{ env.COMMIT_SHA }}
-
-      - name: Smoke test product endpoint
-        run: |
-          set -e
-          for i in {1..30}; do
-            PIP=$(kubectl get svc -n sit722 product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            [ -n "$PIP" ] && break || sleep 10
-          done
-          echo "Product service IP: $PIP"
-          curl -fsS "http://$PIP:8000/" | head -n1
-
-      # - name: Destroy staging RG
-      #   if: always()
-      #   run: az group delete -n "$STG_RG" --yes --no-wait
+          sleep 60
+          PROD_IP=$(kubectl get svc product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          curl -s "http://$PROD_IP:8000/" | grep -i "welcome"
+      - name: Destroy staging
+        if: always()
+        run: az group delete -n $STG_RG --yes --no-wait
