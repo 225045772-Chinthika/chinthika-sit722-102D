@@ -1,102 +1,72 @@
-name: CD (staging) - Create, Deploy, Test, Destroy
+name: CD - staging (ephemeral AKS)
+
 on:
   workflow_run:
-    workflows: ["CI (testing) - Test, Build & Push"]
-    types: [completed]
-  workflow_dispatch:
+    workflows: [ "CI - test, build, push (testing)" ]
+    types: [ "completed" ]
+
+env:
+  LOCATION: ${{ secrets.LOCATION || 'australiaeast' }}
+  ACR: ${{ secrets.ACR_NAME }}.azurecr.io
 
 jobs:
-  staging:
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+  deploy_staging:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    env:
-      RG: sit722-staging-rg
-      AKS: sit722-staging-aks
-      LOC: australiaeast
     steps:
       - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with: { creds: ${{ secrets.AZURE_CREDENTIALS }} }
 
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Discover ACR login server
-        run: echo "ACR_LOGIN_SERVER=$(az acr show -n ${{ secrets.ACR_NAME }} --query loginServer -o tsv)" >> $GITHUB_ENV
-
-      - name: Create staging RG + AKS and attach ACR
+      - name: Create staging RG + AKS, attach ACR
+        id: make
         run: |
-          az group create -n $RG -l $LOC
-          az aks create -g $RG -n $AKS --node-count 1 --generate-ssh-keys
-          az aks update -g $RG -n $AKS --attach-acr ${{ secrets.ACR_NAME }}
+          STG_RG="sit722-stg-rg-${{ github.run_id }}"
+          STG_AKS="sit722-stg-aks-${{ github.run_id }}"
+          echo "STG_RG=$STG_RG" >> $GITHUB_ENV
+          echo "STG_AKS=$STG_AKS" >> $GITHUB_ENV
+          az group create -n $STG_RG -l "$LOCATION"
+          az aks create -g $STG_RG -n $STG_AKS --node-count 1 --generate-ssh-keys
+          az aks update  -g $STG_RG -n $STG_AKS --attach-acr ${{ secrets.ACR_NAME }}
 
-      - name: Get AKS creds
-        run: az aks get-credentials -g $RG -n $AKS --overwrite-existing
+      - name: Set kubectl context (staging)
+        run: az aks get-credentials -g $STG_RG -n $STG_AKS --overwrite-existing
 
-      - name: Apply k8s base (secrets/config, infra)
+      - name: Apply namespace/config
         run: |
-          sed -i "s#<ACR_LOGIN_SERVER>#$ACR_LOGIN_SERVER#g" k8s/*.yaml
-          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/configmaps.yaml
-          kubectl apply -f k8s/rabbitmq.yaml
-          kubectl apply -f k8s/product-db.yaml
-          kubectl apply -f k8s/order-db.yaml
-          kubectl apply -f k8s/customer-db.yaml
+          # Create secret at runtime with a dummy key just for staging smoke tests (no blob write needed)
+          kubectl create secret generic app-secrets -n sit722 \
+            --from-literal=AZURE_STORAGE_ACCOUNT_KEY=dummy-staging-key
 
-      - name: Deploy backends
+      - name: Deploy all services (staging images by commit)
         run: |
-          kubectl apply -f k8s/product-service.yaml
-          kubectl apply -f k8s/order-service.yaml
-          kubectl apply -f k8s/customer-service.yaml
-
-      - name: Wait for backend EXTERNAL-IPs
-        id: ips
-        run: |
-          for i in {1..30}; do
-            PIP=$(kubectl get svc product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            OIP=$(kubectl get svc order-service   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            CIP=$(kubectl get svc customer-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            if [[ -n "$PIP" && -n "$OIP" && -n "$CIP" ]]; then break; fi
-            echo "Waiting for EXTERNAL-IPs..."
-            sleep 10
-          done
-          echo "PIP=$PIP" >> $GITHUB_OUTPUT
-          echo "OIP=$OIP" >> $GITHUB_OUTPUT
-          echo "CIP=$CIP" >> $GITHUB_OUTPUT
-
-      - name: Inject live backend URLs into frontend/main.js and rebuild
-        run: |
-          sed -i "s#_PRODUCT_API_URL_#http://${{ steps.ips.outputs.PIP }}:8000#g" frontend/main.js
-          sed -i "s#_ORDER_API_URL_#http://${{ steps.ips.outputs.OIP }}:8001#g" frontend/main.js
-          sed -i "s#_CUSTOMER_API_URL_#http://${{ steps.ips.outputs.CIP }}:8002#g" frontend/main.js
-          docker build -t $ACR_LOGIN_SERVER/frontend:staging ./frontend
-          docker push $ACR_LOGIN_SERVER/frontend:staging
-
-      - name: Deploy frontend
-        run: |
-          sed -i "s#:latest#:staging#g" k8s/frontend.yaml
+          # Use commit SHA images built by CI:
+          kubectl apply -f k8s/product.yaml
+          kubectl set image deploy/product-deploy -n sit722 \
+            product-service=${{ env.ACR }}/product-service:${{ github.sha }}
+          kubectl apply -f k8s/order.yaml
+          kubectl set image deploy/order-deploy -n sit722 \
+            order-service=${{ env.ACR }}/order-service:${{ github.sha }}
+          kubectl apply -f k8s/customer.yaml
+          kubectl set image deploy/customer-deploy -n sit722 \
+            customer-service=${{ env.ACR }}/customer-service:${{ github.sha }}
           kubectl apply -f k8s/frontend.yaml
+          kubectl set image deploy/frontend-deploy -n sit722 \
+            frontend=${{ env.ACR }}/frontend:${{ github.sha }}
 
-      - name: Wait for frontend EXTERNAL-IP
-        id: fip
-        run: |
-          for i in {1..30}; do
-            FIP=$(kubectl get svc frontend -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            if [[ -n "$FIP" ]]; then break; fi
-            echo "Waiting for frontend IP..."
-            sleep 10
-          done
-          echo "FIP=$FIP" >> $GITHUB_OUTPUT
-
-      - name: Smoke test (curl)
+      - name: Wait for External IPs & smoke test
         run: |
           set -e
-          curl -s "http://${{ steps.ips.outputs.PIP }}:8000/health" | grep -i ok
-          curl -s "http://${{ steps.ips.outputs.OIP }}:8001/health" | grep -i ok
-          curl -s "http://${{ steps.ips.outputs.CIP }}:8002/health" | grep -i ok
-          curl -s "http://${{ steps.fip.outputs.FIP }}" | head -n1 > /dev/null
-          echo "Staging looks good."
+          # Wait for product IP
+          for i in {1..30}; do
+            PIP=$(kubectl get svc -n sit722 product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}'); \
+            [[ -n "$PIP" ]] && break || sleep 10
+          done
+          echo "Product IP: $PIP"
+          curl -fsS "http://$PIP:8000/" | grep -i "welcome"
 
-      - name: Destroy staging environment
+      - name: Destroy staging RG
         if: always()
-        run: az group delete -n $RG --yes --no-wait
+        run: az group delete -n $STG_RG --yes --no-wait

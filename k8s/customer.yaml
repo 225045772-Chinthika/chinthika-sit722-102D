@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-deploy
+  namespace: sit722
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: customer-svc }
+  template:
+    metadata:
+      labels: { app: customer-svc }
+    spec:
+      containers:
+      - name: customer-service
+        image: sit722prodacr.azurecr.io/customer-service:latest
+        imagePullPolicy: IfNotPresent
+        ports: [{ containerPort: 8000 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-service
+  namespace: sit722
+spec:
+  type: LoadBalancer
+  selector: { app: customer-svc }
+  ports:
+    - port: 8002
+      targetPort: 8000

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-deploy
+  namespace: sit722
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: product-svc }
+  template:
+    metadata:
+      labels: { app: product-svc }
+    spec:
+      containers:
+      - name: product-service
+        image: sit722prodacr.azurecr.io/product-service:latest
+        imagePullPolicy: IfNotPresent
+        ports: [{ containerPort: 8000 }]
+        env:
+        - name: AZURE_STORAGE_ACCOUNT_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: AZURE_STORAGE_ACCOUNT_NAME
+        - name: AZURE_STORAGE_CONTAINER
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: AZURE_STORAGE_CONTAINER
+        - name: AZURE_STORAGE_ACCOUNT_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: AZURE_STORAGE_ACCOUNT_KEY
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: sit722
+spec:
+  type: LoadBalancer
+  selector: { app: product-svc }
+  ports:
+    - port: 8000
+      targetPort: 8000

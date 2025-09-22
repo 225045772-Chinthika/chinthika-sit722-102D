@@ -2,9 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: app-config
+  namespace: sit722
 data:
-  PRODUCT_SERVICE_URL: http://product-service:8000
-  ORDER_SERVICE_URL: http://order-service:8000
-  CUSTOMER_SERVICE_URL: http://customer-service:8000
-  AZURE_STORAGE_CONTAINER: product-images
-  RABBITMQ_HOST: rabbitmq
+  AZURE_STORAGE_ACCOUNT_NAME: "sit722prodstorage"
+  AZURE_STORAGE_CONTAINER: "product-images"
