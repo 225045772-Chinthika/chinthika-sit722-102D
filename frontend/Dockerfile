@@ -1,21 +1,24 @@
 # syntax=docker/dockerfile:1
+
 # ---- Build the static site ----
 FROM node:18-alpine AS build
-WORKDIR /app
+WORKDIR /work
 
-# Copy only manifests first (better layer caching)
-COPY frontend/package*.json ./
-RUN npm install    # if you have package-lock.json and want strict installs, switch to: npm ci
+# Copy the whole repo so we can reach frontend/ regardless of layout
+COPY . .
 
-# Copy the rest of the frontend source
-COPY frontend/ ./
-# If your build script name differs, change here
+# Run npm inside the frontend folder
+WORKDIR /work/frontend
+# Use npm ci if lockfile exists, otherwise npm install
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+# Build (change if your script name differs)
 RUN npm run build
 
 # ---- Serve with Nginx ----
 FROM nginx:alpine
-# Vite/most modern setups output into "dist"; for CRA use /app/build instead.
-COPY --from=build /app/dist /usr/share/nginx/html
+# If your build output is "build" (CRA), change 'dist' to 'build' below
+COPY --from=build /work/frontend/build /usr/share/nginx/html
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
