@@ -10,6 +10,8 @@ on:
 jobs:
   test_and_build:
     runs-on: ubuntu-latest
+    container: python:3.10
+
     services:
       product_db:
         image: postgres:14
@@ -18,8 +20,11 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         options: >-
-          --health-cmd="pg_isready -U postgres -d productdb"
-          --health-interval=10s --health-timeout=5s --health-retries=10  
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
       order_db:
         image: postgres:14
         env:
@@ -27,8 +32,11 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         options: >-
-          --health-cmd="pg_isready -U postgres -d orderdb"
-          --health-interval=10s --health-timeout=5s --health-retries=10  
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
       customer_db:
         image: postgres:14
         env:
@@ -36,44 +44,48 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         options: >-
-          --health-cmd="pg_isready -U postgres -d customerdb"
-          --health-interval=10s --health-timeout=5s --health-retries=10
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with: { python-version: '3.10' }
+      - name: Install Python deps (all services)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          for svc in product_service order_service customer_service; do
+            if [ -f backend/$svc/requirements.txt ]; then pip install -r backend/$svc/requirements.txt; fi
+            if [ -f backend/$svc/requirements-dev.txt ]; then pip install -r backend/$svc/requirements-dev.txt; fi
+          done
+
+      - name: Wait for Postgres services to be ready
+        shell: bash
+        run: |
+          for i in {1..30}; do
+            pg_isready -h product_db -U postgres && \
+            pg_isready -h order_db -U postgres && \
+            pg_isready -h customer_db -U postgres && exit 0
+            sleep 2
+          done
+          echo "Postgres services not ready in time" && exit 1
 
       - name: Install deps & run backend tests (skip if none)
+        shell: bash
         run: |
-          set -e
-          python -m pip install --upgrade pip
-          sleep 15  # small wait to give Postgres containers time to accept connections
+          declare -A URLS
+          URLS[product_service]="postgresql://postgres:postgres@product_db:5432/productdb"
+          URLS[order_service]="postgresql://postgres:postgres@order_db:5432/orderdb"
+          URLS[customer_service]="postgresql://postgres:postgres@customer_db:5432/customerdb"
 
           for svc in product_service order_service customer_service; do
-            echo "---- $svc ----"
-
-            # base + dev deps
-            [ -f backend/$svc/requirements.txt ] && pip install -r backend/$svc/requirements.txt || true
-            [ -f backend/$svc/requirements-dev.txt ] && pip install -r backend/$svc/requirements-dev.txt || true
-
-            # Compose the correct DB URL for each service
-            if [ "$svc" = "product_service" ]; then
-              DBURL="postgresql://postgres:postgres@product_db:5432/productdb"
-            elif [ "$svc" = "order_service" ]; then
-              DBURL="postgresql://postgres:postgres@order_db:5432/orderdb"
+            if [ -d "backend/$svc/tests" ]; then
+              echo "Running tests in $svc"
+              (cd backend/$svc && DATABASE_URL="${URLS[$svc]}" pytest -q) || (echo "Tests failed in $svc" && exit 1)
             else
-              DBURL="postgresql://postgres:postgres@customer_db:5432/customerdb"
-            fi
-
-            # Run tests *with* the env var applied inline so pytest definitely sees it
-            if [ -d backend/$svc/tests ]; then
-              echo "Running tests in $svc using $DBURL"
-              DATABASE_URL="$DBURL" pytest backend/$svc/tests || (echo "Tests failed in $svc" && exit 1)
-            else
-              echo "No tests for $svc – skipping"
+              echo "No tests for $svc — skipping"
             fi
           done
 
