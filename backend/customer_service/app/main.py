@@ -13,6 +13,11 @@ from .db import Base, engine, get_db
 from .models import Customer
 from .schemas import CustomerCreate, CustomerResponse, CustomerUpdate
 
+# URLs used by tests and any cross-service calls; override via env in CI/AKS
+PRODUCT_SERVICE_URL  = os.getenv("PRODUCT_SERVICE_URL",  "http://localhost:8000")
+ORDER_SERVICE_URL    = os.getenv("ORDER_SERVICE_URL",    "http://localhost:8001")
+CUSTOMER_SERVICE_URL = os.getenv("CUSTOMER_SERVICE_URL", "http://localhost:8002")
+
 # --- Standard Logging Configuration ---
 logging.basicConfig(
     level=logging.INFO,

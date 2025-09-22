@@ -11,6 +11,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         svc:
           - { name: product,  path: backend/product_service }
@@ -35,6 +36,9 @@ jobs:
         working-directory: ${{ matrix.svc.path }}
         if: ${{ hashFiles(format('{0}/requirements.txt', matrix.svc.path)) != '' }}
         env:
+          PRODUCT_SERVICE_URL:  http://localhost:8000
+          ORDER_SERVICE_URL:    http://localhost:8001
+          CUSTOMER_SERVICE_URL: http://localhost:8002
           # DB settings used by your app on import (adjust names if your code uses different keys)
           POSTGRES_HOST: localhost
           POSTGRES_PORT: "5432"
