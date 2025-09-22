@@ -9,9 +9,6 @@ on:
       - ".github/workflows/ci-testing.yml"
 
 jobs:
-  # -------------------------------
-  # Job 1: run backend tests
-  # -------------------------------
   test_and_build:
     runs-on: ubuntu-latest
     container: python:3.10
@@ -23,7 +20,6 @@ jobs:
           POSTGRES_DB: productdb
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports: ["5432:5432"]   # expose to runner host
         options: >-
           --health-cmd="pg_isready -U postgres"
           --health-interval=10s
@@ -36,7 +32,6 @@ jobs:
           POSTGRES_DB: orderdb
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports: ["5433:5432"]   # expose to runner host
         options: >-
           --health-cmd="pg_isready -U postgres"
           --health-interval=10s
@@ -49,7 +44,6 @@ jobs:
           POSTGRES_DB: customerdb
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports: ["5434:5432"]   # expose to runner host
         options: >-
           --health-cmd="pg_isready -U postgres"
           --health-interval=10s
@@ -76,19 +70,18 @@ jobs:
       - name: Wait for Postgres services to be ready
         shell: bash
         run: |
-          # Wait for each published host port
-          for port in 5432 5433 5434; do
-            echo "Waiting for Postgres at localhost:$port..."
+          for host in product_db order_db customer_db; do
+            echo "Waiting for Postgres at $host:5432..."
             ready=0
             for i in {1..60}; do
-              if pg_isready -h 127.0.0.1 -p "$port" >/dev/null 2>&1; then
-                echo "Postgres ready on $port"
+              if pg_isready -h "$host" -p 5432 -U postgres >/dev/null 2>&1; then
+                echo "$host ready"
                 ready=1
                 break
               fi
               sleep 2
             done
-            [ $ready -eq 1 ] || { echo "Postgres not ready on $port in time"; exit 1; }
+            [ $ready -eq 1 ] || { echo "$host not ready in time"; exit 1; }
           done
 
       - name: Run backend tests
@@ -96,10 +89,9 @@ jobs:
         run: |
           set -e
           for svc in product_service order_service customer_service; do
-            # Build the correct DB URL for each service (match the ports we exposed)
-            if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:5432/productdb"
-            elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:5433/orderdb"
-            elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:5434/customerdb"
+            if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@product_db:5432/productdb"
+            elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@order_db:5432/orderdb"
+            elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@customer_db:5432/customerdb"
             fi
 
             if [ -d backend/$svc/tests ]; then
@@ -110,9 +102,6 @@ jobs:
             fi
           done
 
-  # -------------------------------------------
-  # Job 2: build and push images to ACR (only if tests pass)
-  # -------------------------------------------
   push_images:
     runs-on: ubuntu-latest
     needs: test_and_build
@@ -140,8 +129,6 @@ jobs:
             CONTEXT=$( [[ "$image" == "frontend" ]] && echo frontend || echo backend/$image )
             docker build -t $ACR_LOGIN_SERVER/$image:$IMAGE_TAG "$CONTEXT"
             docker push $ACR_LOGIN_SERVER/$image:$IMAGE_TAG
-
-            # also tag and push 'latest' (useful for staging)
             docker tag  $ACR_LOGIN_SERVER/$image:$IMAGE_TAG $ACR_LOGIN_SERVER/$image:latest
             docker push $ACR_LOGIN_SERVER/$image:latest
           done
