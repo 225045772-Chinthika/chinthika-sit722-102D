@@ -35,15 +35,19 @@ jobs:
       - name: Install deps & run backend tests (skip if none)
         run: |
           set -e
+          python -m pip install --upgrade pip
           for svc in product_service order_service customer_service; do
             if [ -f backend/$svc/requirements.txt ]; then
               pip install -r backend/$svc/requirements.txt || true
+            fi
+            if [ -f backend/$svc/requirements-dev.txt ]; then
+              pip install -r backend/$svc/requirements-dev.txt || true
             fi
             if [ -d backend/$svc/tests ]; then
               pip install pytest || true
               pytest backend/$svc/tests || (echo "Tests failed in $svc" && exit 1)
             else
-              echo "No tests for $svc — skipping"
+              echo "No tests for $svc – skipping"
             fi
           done
 
