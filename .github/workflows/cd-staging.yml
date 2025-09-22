@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows: ["CI - test, build, push (testing)"]
     types: [completed]
+  workflow_dispatch:
 
 env:
   LOCATION: ${{ secrets.LOCATION || 'australiaeast' }}
@@ -57,7 +58,7 @@ jobs:
 
       - name: Set kubectl context (staging)
         run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --overwrite-existing
-        
+
       - name: Apply namespace + config + dummy secret
         run: |
           kubectl apply -f k8s/namespace.yaml
