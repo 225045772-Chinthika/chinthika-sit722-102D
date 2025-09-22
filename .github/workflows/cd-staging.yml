@@ -1,0 +1,102 @@
+name: CD (staging) - Create, Deploy, Test, Destroy
+on:
+  workflow_run:
+    workflows: ["CI (testing) - Test, Build & Push"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  staging:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    env:
+      RG: sit722-staging-rg
+      AKS: sit722-staging-aks
+      LOC: australiaeast
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Discover ACR login server
+        run: echo "ACR_LOGIN_SERVER=$(az acr show -n ${{ secrets.ACR_NAME }} --query loginServer -o tsv)" >> $GITHUB_ENV
+
+      - name: Create staging RG + AKS and attach ACR
+        run: |
+          az group create -n $RG -l $LOC
+          az aks create -g $RG -n $AKS --node-count 1 --generate-ssh-keys
+          az aks update -g $RG -n $AKS --attach-acr ${{ secrets.ACR_NAME }}
+
+      - name: Get AKS creds
+        run: az aks get-credentials -g $RG -n $AKS --overwrite-existing
+
+      - name: Apply k8s base (secrets/config, infra)
+        run: |
+          sed -i "s#<ACR_LOGIN_SERVER>#$ACR_LOGIN_SERVER#g" k8s/*.yaml
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/configmaps.yaml
+          kubectl apply -f k8s/rabbitmq.yaml
+          kubectl apply -f k8s/product-db.yaml
+          kubectl apply -f k8s/order-db.yaml
+          kubectl apply -f k8s/customer-db.yaml
+
+      - name: Deploy backends
+        run: |
+          kubectl apply -f k8s/product-service.yaml
+          kubectl apply -f k8s/order-service.yaml
+          kubectl apply -f k8s/customer-service.yaml
+
+      - name: Wait for backend EXTERNAL-IPs
+        id: ips
+        run: |
+          for i in {1..30}; do
+            PIP=$(kubectl get svc product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            OIP=$(kubectl get svc order-service   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            CIP=$(kubectl get svc customer-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [[ -n "$PIP" && -n "$OIP" && -n "$CIP" ]]; then break; fi
+            echo "Waiting for EXTERNAL-IPs..."
+            sleep 10
+          done
+          echo "PIP=$PIP" >> $GITHUB_OUTPUT
+          echo "OIP=$OIP" >> $GITHUB_OUTPUT
+          echo "CIP=$CIP" >> $GITHUB_OUTPUT
+
+      - name: Inject live backend URLs into frontend/main.js and rebuild
+        run: |
+          sed -i "s#_PRODUCT_API_URL_#http://${{ steps.ips.outputs.PIP }}:8000#g" frontend/main.js
+          sed -i "s#_ORDER_API_URL_#http://${{ steps.ips.outputs.OIP }}:8001#g" frontend/main.js
+          sed -i "s#_CUSTOMER_API_URL_#http://${{ steps.ips.outputs.CIP }}:8002#g" frontend/main.js
+          docker build -t $ACR_LOGIN_SERVER/frontend:staging ./frontend
+          docker push $ACR_LOGIN_SERVER/frontend:staging
+
+      - name: Deploy frontend
+        run: |
+          sed -i "s#:latest#:staging#g" k8s/frontend.yaml
+          kubectl apply -f k8s/frontend.yaml
+
+      - name: Wait for frontend EXTERNAL-IP
+        id: fip
+        run: |
+          for i in {1..30}; do
+            FIP=$(kubectl get svc frontend -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [[ -n "$FIP" ]]; then break; fi
+            echo "Waiting for frontend IP..."
+            sleep 10
+          done
+          echo "FIP=$FIP" >> $GITHUB_OUTPUT
+
+      - name: Smoke test (curl)
+        run: |
+          set -e
+          curl -s "http://${{ steps.ips.outputs.PIP }}:8000/health" | grep -i ok
+          curl -s "http://${{ steps.ips.outputs.OIP }}:8001/health" | grep -i ok
+          curl -s "http://${{ steps.ips.outputs.CIP }}:8002/health" | grep -i ok
+          curl -s "http://${{ steps.fip.outputs.FIP }}" | head -n1 > /dev/null
+          echo "Staging looks good."
+
+      - name: Destroy staging environment
+        if: always()
+        run: az group delete -n $RG --yes --no-wait

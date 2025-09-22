@@ -1,0 +1,50 @@
+name: CD (prod) - Deploy on main
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "k8s/**"
+      - ".github/workflows/cd-prod.yml"
+      - "backend/**"
+      - "frontend/**"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROD_RG: sit722-prod-rg
+      PROD_AKS: sit722-prod-aks
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get ACR login server
+        run: echo "ACR_LOGIN_SERVER=$(az acr show -n ${{ secrets.ACR_NAME }} --query loginServer -o tsv)" >> $GITHUB_ENV
+
+      - name: Get AKS creds
+        run: az aks get-credentials -g $PROD_RG -n $PROD_AKS --overwrite-existing
+
+      - name: Point manifests to ACR (latest tags)
+        run: sed -i "s#<ACR_LOGIN_SERVER>#$ACR_LOGIN_SERVER#g" k8s/*.yaml
+
+      - name: Apply secrets/config + infra
+        run: |
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/configmaps.yaml
+          kubectl apply -f k8s/rabbitmq.yaml
+          kubectl apply -f k8s/product-db.yaml
+          kubectl apply -f k8s/order-db.yaml
+          kubectl apply -f k8s/customer-db.yaml
+
+      - name: Deploy backends & frontend (latest)
+        run: |
+          kubectl apply -f k8s/product-service.yaml
+          kubectl apply -f k8s/order-service.yaml
+          kubectl apply -f k8s/customer-service.yaml
+          # ensure frontend uses :latest
+          sed -i "s#:staging#:latest#g" k8s/frontend.yaml || true
+          kubectl apply -f k8s/frontend.yaml
