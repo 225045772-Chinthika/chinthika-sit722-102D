@@ -93,9 +93,20 @@ jobs:
       - name: Azure Container Registry login
         run: az acr login -n ${{ secrets.ACR_NAME }}
 
-      # Build & push if the path exists
+      # Special-case the frontend: build from repo root, point to its Dockerfile
+      - name: Build & push frontend (root ctx + file=frontend/Dockerfile)
+        if: ${{ matrix.svc.name == 'frontend' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .                 # build from repo root so we can COPY frontend/*
+          file: frontend/Dockerfile  # use the Dockerfile inside the frontend folder
+          push: true
+          tags: |
+            ${{ env.ACR }}/frontend:${{ github.sha }}
+
+      # Backends: keep using their own dirs as context
       - name: Build & push ${{ matrix.svc.name }}
-        if: ${{ hashFiles(format('{0}/**', matrix.svc.path)) != '' }}
+        if: ${{ matrix.svc.name != 'frontend' && hashFiles(format('{0}/**', matrix.svc.path)) != '' }}
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.svc.path }}
