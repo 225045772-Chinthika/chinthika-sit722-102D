@@ -66,6 +66,26 @@ jobs:
           apt-get update
           apt-get install -y postgresql-client
 
+      - name: Resolve mapped ports and wait for DBs
+        run: |
+          # Mapped ports for each service (on the runner host)
+          export P_PRODUCT=${{ job.services.product_db.ports[5432] }}
+          export P_ORDER=${{ job.services.order_db.ports[5432] }}
+          export P_CUSTOMER=${{ job.services.customer_db.ports[5432] }}
+
+          echo "product_db -> localhost:${P_PRODUCT}"
+          echo "order_db    -> localhost:${P_ORDER}"
+          echo "customer_db -> localhost:${P_CUSTOMER}"
+
+          # Wait until all are ready
+          for i in {1..60}; do
+            pg_isready -h 127.0.0.1 -p "${P_PRODUCT}"   >/dev/null 2>&1 && \
+            pg_isready -h 127.0.0.1 -p "${P_ORDER}"     >/dev/null 2>&1 && \
+            pg_isready -h 127.0.0.1 -p "${P_CUSTOMER}"  >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "Postgres services not ready in time" && exit 1
+
       - name: Wait for Postgres services to be ready
         shell: bash
         run: |
@@ -78,19 +98,25 @@ jobs:
           echo "Postgres services not ready in time" && exit 1
 
       - name: Install deps & run backend tests (skip if none)
-        shell: bash
         run: |
-          declare -A URLS
-          URLS[product_service]="postgresql://postgres:postgres@product_db:5432/productdb"
-          URLS[order_service]="postgresql://postgres:postgres@order_db:5432/orderdb"
-          URLS[customer_service]="postgresql://postgres:postgres@customer_db:5432/customerdb"
-
+          set -e
+          python -m pip install --upgrade pip
+          # install base + dev requirements per service
           for svc in product_service order_service customer_service; do
-            if [ -d "backend/$svc/tests" ]; then
-              echo "Running tests in $svc"
-              (cd backend/$svc && DATABASE_URL="${URLS[$svc]}" pytest -q) || (echo "Tests failed in $svc" && exit 1)
+            if [ -f backend/$svc/requirements.txt ]; then pip install -r backend/$svc/requirements.txt || true; fi
+            if [ -f backend/$svc/requirements-dev.txt ]; then pip install -r backend/$svc/requirements-dev.txt || true; fi
+
+            # Pick the correct DB URL using mapped ports
+            if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:${P_PRODUCT}/productdb"
+            elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:${P_ORDER}/orderdb"
+            elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@127.0.0.1:${P_CUSTOMER}/customerdb"
+            fi
+
+            if [ -d backend/$svc/tests ]; then
+              echo "Running tests in $svc using $DBURL"
+              DATABASE_URL="$DBURL" pytest backend/$svc/tests || (echo "Tests failed in $svc" && exit 1)
             else
-              echo "No tests for $svc — skipping"
+              echo "No tests for $svc – skipping"
             fi
           done
 
