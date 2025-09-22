@@ -85,26 +85,58 @@ jobs:
             done
           done
 
+      # - name: Run backend tests
+      #   shell: bash
+      #   run: |
+      #     set -euo pipefail
+
+      #     for svc in product_service order_service customer_service; do
+      #       # Pick correct DB URL for each service (use service hostnames)
+      #       if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@product_db:5432/productdb"
+      #       elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@order_db:5432/orderdb"
+      #       elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@customer_db:5432/customerdb"
+      #       else
+      #         echo "Unknown service $svc"; exit 1
+      #       fi
+
+      #       if [ -d "backend/$svc/tests" ]; then
+      #         echo "Running tests in $svc using $DBURL"
+      #         DATABASE_URL="$DBURL" pytest "backend/$svc/tests"
+      #       else
+      #         echo "No tests for $svc – skipping"
+      #       fi
+      #     done
+
+
       - name: Run backend tests
         shell: bash
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_PORT: 5432
         run: |
-          set -euo pipefail
+          set -e
+
+          # map service -> host and db name (matches your services:)
+          declare -A HOSTS=( \
+            ["product_service"]=product_db \
+            ["order_service"]=order_db \
+            ["customer_service"]=customer_db \
+          )
+          declare -A DBNAMES=( \
+            ["product_service"]=productdb \
+            ["order_service"]=orderdb \
+            ["customer_service"]=customerdb \
+          )
 
           for svc in product_service order_service customer_service; do
-            # Pick correct DB URL for each service (use service hostnames)
-            if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@product_db:5432/productdb"
-            elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@order_db:5432/orderdb"
-            elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@customer_db:5432/customerdb"
-            else
-              echo "Unknown service $svc"; exit 1
-            fi
+            export POSTGRES_HOST="${HOSTS[$svc]}"
+            export POSTGRES_DB="${DBNAMES[$svc]}"
 
-            if [ -d "backend/$svc/tests" ]; then
-              echo "Running tests in $svc using $DBURL"
-              DATABASE_URL="$DBURL" pytest "backend/$svc/tests"
-            else
-              echo "No tests for $svc – skipping"
-            fi
+            echo "Running tests in $svc against $POSTGRES_HOST/$POSTGRES_DB ..."
+            # ensure pytest is available even if not in requirements-dev.txt
+            python -m pip install --quiet pytest
+            pytest -q "backend/$svc/tests"
           done
 
   push_images:
