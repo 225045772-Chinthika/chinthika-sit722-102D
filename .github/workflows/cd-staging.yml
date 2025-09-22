@@ -72,6 +72,6 @@ jobs:
           echo "Product service IP: $PIP"
           curl -fsS "http://$PIP:8000/" | head -n1
 
-      - name: Destroy staging RG
-        if: always()
-        run: az group delete -n "$STG_RG" --yes --no-wait
+      # - name: Destroy staging RG
+      #   if: always()
+      #   run: az group delete -n "$STG_RG" --yes --no-wait
