@@ -2,56 +2,54 @@ name: CD - production (AKS persistent)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
-  RG: ${{ secrets.PROD_RG }}
-  AKS: ${{ secrets.PROD_AKS }}
-  ACR: ${{ secrets.ACR_NAME }}.azurecr.io
+  PROD_RG:  ${{ secrets.PROD_RG || 'sit722-prod-rg' }}
+  PROD_AKS: ${{ secrets.PROD_AKS || 'sit722-prod-aks' }}
+  ACR:      ${{ secrets.ACR_NAME }}.azurecr.io
 
 jobs:
-  deploy:
+  deploy_prod:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/login@v2
-        with: { creds: ${{ secrets.AZURE_CREDENTIALS }} }
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: AKS context (prod)
-        run: az aks get-credentials -g "$RG" -n "$AKS" --overwrite-existing
+        run: az aks get-credentials -g "$PROD_RG" -n "$PROD_AKS" --overwrite-existing
 
-      - name: Ensure namespace/config/secret
+      - name: Namespace, configmap, and prod secret
         run: |
           kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/configmaps.yaml
-          # Create/patch secret with real storage key from repo secret
           kubectl delete secret app-secrets -n sit722 --ignore-not-found
           kubectl create secret generic app-secrets -n sit722 \
             --from-literal=AZURE_STORAGE_ACCOUNT_KEY="${{ secrets.AZURE_STORAGE_ACCOUNT_KEY }}"
 
-      - name: Apply manifests and set images by commit
+      - name: Apply manifests
         run: |
           kubectl apply -f k8s/product.yaml
-          kubectl set image deploy/product-deploy -n sit722 \
-            product-service=${{ env.ACR }}/product-service:${{ github.sha }}
-
           kubectl apply -f k8s/order.yaml
-          kubectl set image deploy/order-deploy -n sit722 \
-            order-service=${{ env.ACR }}/order-service:${{ github.sha }}
-
           kubectl apply -f k8s/customer.yaml
-          kubectl set image deploy/customer-deploy -n sit722 \
-            customer-service=${{ env.ACR }}/customer-service:${{ github.sha }}
-
           kubectl apply -f k8s/frontend.yaml
-          kubectl set image deploy/frontend-deploy -n sit722 \
-            frontend=${{ env.ACR }}/frontend:${{ github.sha }}
 
-      - name: Validate product endpoint
+      - name: Set images to this commit
+        run: |
+          kubectl set image deploy/product-deploy  -n sit722 product-service=${{ env.ACR }}/product-service:${{ github.sha }}
+          kubectl set image deploy/order-deploy    -n sit722 order-service=${{ env.ACR }}/order-service:${{ github.sha }}
+          kubectl set image deploy/customer-deploy -n sit722 customer-service=${{ env.ACR }}/customer-service:${{ github.sha }}
+          kubectl set image deploy/frontend-deploy -n sit722 frontend=${{ env.ACR }}/frontend:${{ github.sha }}
+
+      - name: Verify product endpoint (log first line)
         run: |
           for i in {1..30}; do
-            PIP=$(kubectl get svc -n sit722 product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}'); \
-            [[ -n "$PIP" ]] && break || sleep 10
+            PIP=$(kubectl get svc -n sit722 product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -n "$PIP" ] && break || sleep 10
           done
-          echo "Product IP: $PIP"
+          echo "Product service IP: $PIP"
           curl -fsS "http://$PIP:8000/" | head -n1
