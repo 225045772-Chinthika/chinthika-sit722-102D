@@ -4,18 +4,21 @@
 #   workflow_run:
 #     workflows: ["CI - test, build, push (testing)"]
 #     types: [completed]
-#   workflow_dispatch:
+#   workflow_dispatch: {}
+
+# permissions:
+#   actions: read
+#   contents: read
 
 # env:
-#   LOCATION: ${{ secrets.LOCATION || 'australiaeast' }}
+#   LOCATION: australiaeast
 #   ACR_NAME: ${{ secrets.ACR_NAME }}
 #   ACR: ${{ secrets.ACR_NAME }}.azurecr.io
-#   # Use the exact commit from the CI run that triggered this workflow:
-#   COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+#   COMMIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 # jobs:
 #   deploy_staging:
-#     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+#     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
 #     runs-on: ubuntu-latest
 #     steps:
 #       - uses: actions/checkout@v4
@@ -26,37 +29,29 @@
 #           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
 #       - name: Show Azure context
-#         run: |
-#           az account show -o table
-#           echo "Using LOCATION=${{ env.LOCATION }}"
-#           echo "Using ACR=${{ env.ACR }}"
+#         run: az account show -o table
 
 #       - name: Create staging RG + AKS, attach ACR
-#         id: infra
 #         run: |
 #           set -e
 #           STG_RG="sit722-stg-rg-${{ github.run_id }}"
 #           STG_AKS="sit722-stg-aks-${{ github.run_id }}"
-#           echo "STG_RG=$STG_RG"   | tee -a $GITHUB_ENV
-#           echo "STG_AKS=$STG_AKS" | tee -a $GITHUB_ENV
+#           echo "STG_RG=$STG_RG"   >> $GITHUB_ENV
+#           echo "STG_AKS=$STG_AKS" >> $GITHUB_ENV
 
-#           echo "Creating RG: $STG_RG in ${{ env.LOCATION }}"
 #           az group create -n "$STG_RG" -l "${{ env.LOCATION }}" -o table
-#           az aks create -g "$STG_RG" -n "$STG_AKS" --node-count 1 --enable-managed-identity --generate-ssh-keys -o table
- 
-#           echo "Attaching ACR: ${{ env.ACR_NAME }}"          
-#           az aks update  -g "$STG_RG" -n "$STG_AKS" --attach-acr "$ACR_NAME"
 
-#       - name: Set kubectl context (staging)
-#         run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --attach-acr "${{ env.ACR_NAME }}" -o table
+#           az aks create -g "$STG_RG" -n "$STG_AKS" \
+#             --node-count 1 \
+#             --node-vm-size Standard_D2s_v3 \
+#             --tier free \
+#             --enable-managed-identity \
+#             --generate-ssh-keys \
+#             -o table
 
-#       - name: Verify staging RG exists
-#         run: |
-#           az group show -n "$STG_RG" -o table
-#           echo "Listing resources in $STG_RG"
-#           az resource list -g "$STG_RG" -o table || true
+#           az aks update -g "$STG_RG" -n "$STG_AKS" --attach-acr "${{ env.ACR_NAME }}" -o table
 
-#       - name: Set kubectl context (staging)
+#       - name: Set kubectl context
 #         run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --overwrite-existing
 
 #       - name: Apply namespace + config + dummy secret
@@ -67,15 +62,13 @@
 #           kubectl create secret generic app-secrets -n sit722 \
 #             --from-literal=AZURE_STORAGE_ACCOUNT_KEY=dummy-staging-key
 
-#       - name: Deploy manifests with images from CI commit
+#       - name: Deploy manifests and set images from CI commit
 #         run: |
-#           # Apply base manifests
 #           kubectl apply -f k8s/product.yaml
 #           kubectl apply -f k8s/order.yaml
 #           kubectl apply -f k8s/customer.yaml
 #           kubectl apply -f k8s/frontend.yaml
 
-#           # Pin to images built in Stage 1 (by commit SHA)
 #           kubectl set image deploy/product-deploy  -n sit722 product-service=${{ env.ACR }}/product-service:${{ env.COMMIT_SHA }}
 #           kubectl set image deploy/order-deploy    -n sit722 order-service=${{ env.ACR }}/order-service:${{ env.COMMIT_SHA }}
 #           kubectl set image deploy/customer-deploy -n sit722 customer-service=${{ env.ACR }}/customer-service:${{ env.COMMIT_SHA }}
@@ -83,7 +76,6 @@
 
 #       - name: Smoke test product endpoint
 #         run: |
-#           set -e
 #           for i in {1..30}; do
 #             PIP=$(kubectl get svc -n sit722 product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 #             [ -n "$PIP" ] && break || sleep 10
@@ -98,28 +90,52 @@
 
 
 
-name: CD - staging (ephemeral AKS)
+name: CD - staging (ephemeral or reuse)
 
 on:
+  # Auto-trigger after CI succeeds
   workflow_run:
     workflows: ["CI - test, build, push (testing)"]
     types: [completed]
-  workflow_dispatch: {}
+  # Manual trigger with inputs
+  workflow_dispatch:
+    inputs:
+      stg_rg:
+        description: "Existing staging Resource Group name (leave empty to create new)"
+        required: false
+        type: string
+      stg_aks:
+        description: "Existing staging AKS name (leave empty to create new)"
+        required: false
+        type: string
+      location:
+        description: "Azure region (when creating a new RG/AKS)"
+        required: false
+        default: "australiaeast"
+        type: string
+      destroy_after:
+        description: "Delete the staging RG after run (only for newly created RGs)"
+        required: false
+        default: "true"
+        type: choice
+        options: ["true", "false"]
 
 permissions:
-  actions: read
   contents: read
 
 env:
-  LOCATION: australiaeast
+  # ACR used by both staging & prod (your current setup)
   ACR_NAME: ${{ secrets.ACR_NAME }}
   ACR: ${{ secrets.ACR_NAME }}.azurecr.io
+  # image tag from the CI commit
   COMMIT_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   deploy_staging:
+    # run automatically only if CI succeeded OR when manually dispatched
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -128,61 +144,95 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Show Azure context
-        run: az account show -o table
+      - name: Decide reuse vs create
+        id: decide
+        run: |
+          # Inputs (may be empty if run from CI)
+          IN_RG="${{ github.event.inputs.stg_rg }}"
+          IN_AKS="${{ github.event.inputs.stg_aks }}"
+          IN_LOC="${{ github.event.inputs.location }}"
+          DESTROY="${{ github.event.inputs.destroy_after }}"
 
-      - name: Create staging RG + AKS, attach ACR
+          # Defaults for CI-triggered runs
+          if [ -z "$IN_LOC" ]; then IN_LOC="australiaeast"; fi
+          if [ -z "$DESTROY" ]; then DESTROY="true"; fi
+
+          if [ -n "$IN_RG" ] && [ -n "$IN_AKS" ]; then
+            echo "mode=reuse"       >> "$GITHUB_OUTPUT"
+            echo "STG_RG=$IN_RG"    >> "$GITHUB_ENV"
+            echo "STG_AKS=$IN_AKS"  >> "$GITHUB_ENV"
+            echo "DESTROY=false"    >> "$GITHUB_ENV"   # don't delete reused infra
+          else
+            echo "mode=create"      >> "$GITHUB_OUTPUT"
+            echo "LOCATION=$IN_LOC" >> "$GITHUB_ENV"
+            echo "DESTROY=$DESTROY" >> "$GITHUB_ENV"
+            # unique names per run
+            echo "STG_RG=sit722-stg-rg-${{ github.run_id }}"  >> "$GITHUB_ENV"
+            echo "STG_AKS=sit722-stg-aks-${{ github.run_id }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Show decision
+        run: |
+          echo "MODE: ${{ steps.decide.outputs.mode }}"
+          echo "STG_RG: $STG_RG"
+          echo "STG_AKS: $STG_AKS"
+          echo "ACR: $ACR"
+
+      # Create when in create mode
+      - name: Create staging RG + AKS (when creating)
+        if: ${{ steps.decide.outputs.mode == 'create' }}
         run: |
           set -e
-          STG_RG="sit722-stg-rg-${{ github.run_id }}"
-          STG_AKS="sit722-stg-aks-${{ github.run_id }}"
-          echo "STG_RG=$STG_RG"   >> $GITHUB_ENV
-          echo "STG_AKS=$STG_AKS" >> $GITHUB_ENV
-
           az group create -n "$STG_RG" -l "${{ env.LOCATION }}" -o table
-
           az aks create -g "$STG_RG" -n "$STG_AKS" \
             --node-count 1 \
-            --node-vm-size Standard_D2s_v3 \
+            --node-vm-size Standard_D2s_v3 \   # policy-approved in your sub
             --tier free \
             --enable-managed-identity \
             --generate-ssh-keys \
             -o table
 
-          az aks update -g "$STG_RG" -n "$STG_AKS" --attach-acr "${{ env.ACR_NAME }}" -o table
+      # Attach ACR and get kubectl context (works for both reuse/create)
+      - name: Attach ACR (idempotent)
+        run: az aks update -g "$STG_RG" -n "$STG_AKS" --attach-acr "${{ env.ACR_NAME }}" -o table
 
       - name: Set kubectl context
         run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --overwrite-existing
 
-      - name: Apply namespace + config + dummy secret
+      - name: Apply namespace + config (+fallback secret)
         run: |
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/configmaps.yaml
-          kubectl delete secret app-secrets -n sit722 --ignore-not-found
-          kubectl create secret generic app-secrets -n sit722 \
-            --from-literal=AZURE_STORAGE_ACCOUNT_KEY=dummy-staging-key
+          NS=sit722
+          kubectl create ns "$NS" --dry-run=client -o yaml | kubectl apply -f -
+          [ -f k8s/configmaps.yaml ] && kubectl apply -n "$NS" -f k8s/configmaps.yaml || echo "no configmaps.yaml"
+          if [ -f k8s/secrets.yaml ]; then
+            kubectl apply -n "$NS" -f k8s/secrets.yaml
+          else
+            kubectl delete secret app-secrets -n "$NS" --ignore-not-found
+            kubectl create secret generic app-secrets -n "$NS" \
+              --from-literal=AZURE_STORAGE_ACCOUNT_KEY=dummy-staging-key
+          fi
 
-      - name: Deploy manifests and set images from CI commit
+      - name: Deploy manifests and set images
         run: |
-          kubectl apply -f k8s/product.yaml
-          kubectl apply -f k8s/order.yaml
-          kubectl apply -f k8s/customer.yaml
-          kubectl apply -f k8s/frontend.yaml
-
-          kubectl set image deploy/product-deploy  -n sit722 product-service=${{ env.ACR }}/product-service:${{ env.COMMIT_SHA }}
-          kubectl set image deploy/order-deploy    -n sit722 order-service=${{ env.ACR }}/order-service:${{ env.COMMIT_SHA }}
-          kubectl set image deploy/customer-deploy -n sit722 customer-service=${{ env.ACR }}/customer-service:${{ env.COMMIT_SHA }}
-          kubectl set image deploy/frontend-deploy -n sit722 frontend=${{ env.ACR }}/frontend:${{ env.COMMIT_SHA }}
+          NS=sit722
+          for f in k8s/namespace.yaml k8s/product.yaml k8s/order.yaml k8s/customer.yaml k8s/frontend.yaml; do
+            [ -f "$f" ] && kubectl apply -n "$NS" -f "$f" || echo "$f missing"
+          done
+          kubectl set image -n "$NS" deploy/product-deploy  product-service=${{ env.ACR }}/product-service:${{ env.COMMIT_SHA }} || true
+          kubectl set image -n "$NS" deploy/order-deploy    order-service=${{ env.ACR }}/order-service:${{ env.COMMIT_SHA }} || true
+          kubectl set image -n "$NS" deploy/customer-deploy customer-service=${{ env.ACR }}/customer-service:${{ env.COMMIT_SHA }} || true
+          kubectl set image -n "$NS" deploy/frontend-deploy frontend=${{ env.ACR }}/frontend:${{ env.COMMIT_SHA }} || true
 
       - name: Smoke test product endpoint
         run: |
+          NS=sit722
           for i in {1..30}; do
-            PIP=$(kubectl get svc -n sit722 product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            [ -n "$PIP" ] && break || sleep 10
+            IP=$(kubectl get svc -n "$NS" product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -n "$IP" ] && break || sleep 10
           done
-          echo "Product service IP: $PIP"
-          curl -fsS "http://$PIP:8000/" | head -n1
+          echo "Product service IP: $IP"
+          curl -fsS "http://$IP:8000/" | head -n1
 
-      # - name: Destroy staging RG
-      #   if: always()
-      #   run: az group delete -n "$STG_RG" --yes --no-wait
+      - name: Destroy staging RG (only if we created it and user chose to)
+        if: ${{ steps.decide.outputs.mode == 'create' && env.DESTROY == 'true' }}
+        run: az group delete -n "$STG_RG" --yes --no-wait
