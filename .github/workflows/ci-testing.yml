@@ -70,33 +70,38 @@ jobs:
       - name: Wait for Postgres services to be ready
         shell: bash
         run: |
+          set -e
           for host in product_db order_db customer_db; do
             echo "Waiting for Postgres at $host:5432..."
-            ready=0
             for i in {1..60}; do
               if pg_isready -h "$host" -p 5432 -U postgres >/dev/null 2>&1; then
                 echo "$host ready"
-                ready=1
                 break
               fi
               sleep 2
+              if [ $i -eq 60 ]; then
+                echo "ERROR: ${host} not ready in time"; exit 1
+              fi
             done
-            [ $ready -eq 1 ] || { echo "$host not ready in time"; exit 1; }
           done
 
       - name: Run backend tests
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
           for svc in product_service order_service customer_service; do
+            # Pick correct DB URL for each service (use service hostnames)
             if   [ "$svc" = "product_service"  ]; then DBURL="postgresql://postgres:postgres@product_db:5432/productdb"
             elif [ "$svc" = "order_service"    ]; then DBURL="postgresql://postgres:postgres@order_db:5432/orderdb"
             elif [ "$svc" = "customer_service" ]; then DBURL="postgresql://postgres:postgres@customer_db:5432/customerdb"
+            else
+              echo "Unknown service $svc"; exit 1
             fi
 
-            if [ -d backend/$svc/tests ]; then
+            if [ -d "backend/$svc/tests" ]; then
               echo "Running tests in $svc using $DBURL"
-              DATABASE_URL="$DBURL" pytest backend/$svc/tests
+              DATABASE_URL="$DBURL" pytest "backend/$svc/tests"
             else
               echo "No tests for $svc – skipping"
             fi
