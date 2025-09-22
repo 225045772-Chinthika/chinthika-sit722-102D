@@ -24,22 +24,40 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Show Azure context
+        run: |
+          az account show -o table
+          echo "Using LOCATION=${{ env.LOCATION }}"
+          echo "Using ACR=${{ env.ACR }}"
+
       - name: Create staging RG + AKS, attach ACR
         id: infra
         run: |
           set -e
           STG_RG="sit722-stg-rg-${{ github.run_id }}"
           STG_AKS="sit722-stg-aks-${{ github.run_id }}"
-          echo "STG_RG=$STG_RG" >> $GITHUB_ENV
-          echo "STG_AKS=$STG_AKS" >> $GITHUB_ENV
+          echo "STG_RG=$STG_RG"   | tee -a $GITHUB_ENV
+          echo "STG_AKS=$STG_AKS" | tee -a $GITHUB_ENV
 
-          az group create -n "$STG_RG" -l "$LOCATION"
-          az aks create -g "$STG_RG" -n "$STG_AKS" --node-count 1 --enable-managed-identity --generate-ssh-keys
+          echo "Creating RG: $STG_RG in ${{ env.LOCATION }}"
+          az group create -n "$STG_RG" -l "${{ env.LOCATION }}" -o table
+          az aks create -g "$STG_RG" -n "$STG_AKS" --node-count 1 --enable-managed-identity --generate-ssh-keys -o table
+ 
+          echo "Attaching ACR: ${{ env.ACR_NAME }}"          
           az aks update  -g "$STG_RG" -n "$STG_AKS" --attach-acr "$ACR_NAME"
 
       - name: Set kubectl context (staging)
-        run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --overwrite-existing
+        run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --attach-acr "${{ env.ACR_NAME }}" -o table
 
+      - name: Verify staging RG exists
+        run: |
+          az group show -n "$STG_RG" -o table
+          echo "Listing resources in $STG_RG"
+          az resource list -g "$STG_RG" -o table || true
+
+      - name: Set kubectl context (staging)
+        run: az aks get-credentials -g "$STG_RG" -n "$STG_AKS" --overwrite-existing
+        
       - name: Apply namespace + config + dummy secret
         run: |
           kubectl apply -f k8s/namespace.yaml
