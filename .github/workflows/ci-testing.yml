@@ -34,16 +34,35 @@ jobs:
       - name: Install deps & run tests (${{ matrix.svc.name }})
         working-directory: ${{ matrix.svc.path }}
         if: ${{ hashFiles(format('{0}/requirements.txt', matrix.svc.path)) != '' }}
+        env:
+          # DB settings used by your app on import (adjust names if your code uses different keys)
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          # Many templates also read a combined URL:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+          # In case your code gates cloud deps:
+          AZURE_STORAGE_ACCOUNT_NAME: dummy
+          AZURE_STORAGE_CONTAINER: dummy
+          AZURE_STORAGE_ACCOUNT_KEY: dummy
+          # Helpful so Python can resolve local packages
+          PYTHONPATH: ${{ matrix.svc.path }}
         run: |
+          # install service deps (prefer dev reqs if present)
           if [ -f "requirements-dev.txt" ]; then
             python -m pip install -r requirements-dev.txt
           else
             python -m pip install -r requirements.txt
           fi
-          # add test-only deps here
+
+          # test-only deps
           python -m pip install pytest httpx
+
+          # run tests (and show full traceback if something still fails)
           if [ -f "pytest.ini" ] || ls tests 1> /dev/null 2>&1; then
-            python -m pytest -q
+            python -m pytest -q || python -m pytest -vv -ra
           else
             echo "No tests found for ${{ matrix.svc.name }}, skipping."
           fi
