@@ -140,8 +140,15 @@ jobs:
           echo "STG_AKS=$STG_AKS" >> $GITHUB_ENV
 
           az group create -n "$STG_RG" -l "${{ env.LOCATION }}" -o table
+
           az aks create -g "$STG_RG" -n "$STG_AKS" \
-            --node-count 1 --enable-managed-identity --generate-ssh-keys -o table
+            --node-count 1 \
+            --node-vm-size Standard_D2s_v3 \
+            --tier DevTest \
+            --enable-managed-identity \
+            --generate-ssh-keys \
+            -o table
+
           az aks update -g "$STG_RG" -n "$STG_AKS" --attach-acr "${{ env.ACR_NAME }}" -o table
 
       - name: Set kubectl context
