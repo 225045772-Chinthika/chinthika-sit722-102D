@@ -29,14 +29,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
+
+      # Install your app deps + pytest, then run tests (if present)
       - name: Install deps & run tests (${{ matrix.svc.name }})
         working-directory: ${{ matrix.svc.path }}
-        # only run if the folder exists (guards against name mismatches)
         if: ${{ hashFiles(format('{0}/requirements.txt', matrix.svc.path)) != '' }}
         run: |
-          pip install -r requirements.txt
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
           if [ -f "pytest.ini" ] || ls tests 1> /dev/null 2>&1; then
-            pytest -q
+            python -m pytest -q
           else
             echo "No tests found for ${{ matrix.svc.name }}, skipping."
           fi
@@ -53,9 +55,15 @@ jobs:
           - { name: frontend,         path: frontend }
     steps:
       - uses: actions/checkout@v4
+
+      # Login to Azure for ACR auth
       - uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Ensure Docker is logged in to your ACR before pushing
+      - name: Azure Container Registry login
+        run: az acr login -n ${{ secrets.ACR_NAME }}
 
       # Build & push if the path exists
       - name: Build & push ${{ matrix.svc.name }}
@@ -65,4 +73,4 @@ jobs:
           context: ${{ matrix.svc.path }}
           push: true
           tags: |
-            ${{ secrets.ACR_NAME }}.azurecr.io/${{ matrix.svc.name }}:${{ github.sha }}
+            ${{ env.ACR }}/${{ matrix.svc.name }}:${{ github.sha }}
