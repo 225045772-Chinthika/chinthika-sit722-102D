@@ -4,4 +4,4 @@ sqlalchemy
 psycopg2-binary
 pydantic[email]
 pytest
-httpx
+httpx>=0.24.1,<0.28

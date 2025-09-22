@@ -5,4 +5,4 @@ psycopg2-binary
 pydantic
 aio-pika
 pytest
-httpx
+httpx>=0.24.1,<0.28
