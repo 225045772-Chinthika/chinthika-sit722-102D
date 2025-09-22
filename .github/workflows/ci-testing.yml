@@ -61,13 +61,18 @@ jobs:
             if [ -f backend/$svc/requirements-dev.txt ]; then pip install -r backend/$svc/requirements-dev.txt; fi
           done
 
+      - name: Install Postgres client (for pg_isready)
+        run: |
+          apt-get update
+          apt-get install -y postgresql-client
+
       - name: Wait for Postgres services to be ready
         shell: bash
         run: |
-          for i in {1..30}; do
-            pg_isready -h product_db -U postgres && \
-            pg_isready -h order_db -U postgres && \
-            pg_isready -h customer_db -U postgres && exit 0
+          for i in {1..60}; do
+            pg_isready -h product_db -U postgres >/dev/null 2>&1 && \
+            pg_isready -h order_db   -U postgres >/dev/null 2>&1 && \
+            pg_isready -h customer_db -U postgres >/dev/null 2>&1 && exit 0
             sleep 2
           done
           echo "Postgres services not ready in time" && exit 1
