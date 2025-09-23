@@ -93,12 +93,11 @@ jobs:
             test "$IMG" = "$expected"
           done
 
-      # 2) Wait for product-service rollout (with self-heal fallback)
+    # 2) Wait for product-service rollout (with self-heal fallback)
       - name: Wait for product-service rollout (with self-heal)
         run: |
           set -euo pipefail
 
-          # First try a normal wait (10 minutes is generous on fresh AKS)
           if kubectl rollout status deploy/product-service -n sit722 --timeout=600s; then
             echo "product-service rolled out normally"
             exit 0
@@ -106,9 +105,9 @@ jobs:
 
           echo "::warning:: product-service rollout timed out; attempting self-heal"
 
-          # Get the selector used by the deployment (works whatever labels you used)
+          # NOTE: go-template (not jsonpath)
           SEL=$(kubectl get deploy/product-service -n sit722 \
-            -o jsonpath='{range $k,$v := .spec.selector.matchLabels}{printf "%s=%s," $k $v}{end}')
+            -o go-template='{{range $k,$v := .spec.selector.matchLabels}}{{printf "%s=%s," $k $v}}{{end}}')
           SEL=${SEL%,}
           echo "Selector: $SEL"
 
@@ -117,12 +116,10 @@ jobs:
           kubectl get rs -n sit722 -l "$SEL" -o wide || true
           kubectl get pods -n sit722 -l "$SEL" -o wide || true
 
-          # Recovery: scale down to 0 (kills any stuck old replicas), then back to 1
           kubectl scale deploy/product-service -n sit722 --replicas=0
           kubectl wait --for=delete pod -l "$SEL" -n sit722 --timeout=180s || true
           kubectl scale deploy/product-service -n sit722 --replicas=1
 
-          # Try again; if it still doesn't finish, don't fail here—let smoke test decide
           if ! kubectl rollout status deploy/product-service -n sit722 --timeout=600s; then
             echo "::warning:: product-service still not fully rolled out; will proceed to smoke test"
           fi
@@ -130,7 +127,7 @@ jobs:
           echo "Diagnostics (after):"
           kubectl get deploy/product-service -n sit722 -o wide || true
           kubectl get rs -n sit722 -l "$SEL" -o wide || true
-          kubectl get pods -n sit722 -l "$SEL" -o wide || true  
+          kubectl get pods -n sit722 -l "$SEL" -o wide || true 
 
       # 3) Get a public IP and curl the service (acceptance test)
       - name: Smoke test product-service
