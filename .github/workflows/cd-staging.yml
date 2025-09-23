@@ -139,14 +139,14 @@ jobs:
       - run: echo "Click 'Review deployments' and Approve when you're done manual testing in the Portal."
 
   cleanup:
-    needs: approval
+    needs: [staging, approval]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Azure login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-
       - name: Delete staging resource group
         env:
           RG: ${{ needs.staging.outputs.rg }}
