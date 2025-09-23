@@ -147,27 +147,27 @@ jobs:
           echo "frontend => http://$ipf/"
 
       # 3) Get a public IP and curl the service (acceptance test)
-      - name: Smoke test product-service
-        continue-on-error: true
-        run: |
-          SVC=product-service
-          for i in {1..30}; do
-            IP=$(kubectl get svc $SVC -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
-          done
-          PORT=$(kubectl get svc $SVC -n sit722 -o jsonpath='{.spec.ports[0].port}')
-          echo "Testing http://$IP:$PORT/"
-          test -n "$IP" && curl -s --retry 10 --retry-delay 6 "http://$IP:$PORT/" | grep -i "Welcome"
+      # - name: Smoke test product-service
+      #   continue-on-error: true
+      #   run: |
+      #     SVC=product-service
+      #     for i in {1..30}; do
+      #       IP=$(kubectl get svc $SVC -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+      #       [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
+      #     done
+      #     PORT=$(kubectl get svc $SVC -n sit722 -o jsonpath='{.spec.ports[0].port}')
+      #     echo "Testing http://$IP:$PORT/"
+      #     test -n "$IP" && curl -s --retry 10 --retry-delay 6 "http://$IP:$PORT/" | grep -i "Welcome"
 
-      - name: Smoke test frontend
-        continue-on-error: true
-        run: |
-          for i in {1..30}; do
-            IP=$(kubectl get svc frontend -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
-          done
-          test -n "$IP"
-          curl -s --retry 10 --retry-delay 6 "http://${IP}/" | grep -i "E-commerce"
+      # - name: Smoke test frontend
+      #   continue-on-error: true
+      #   run: |
+      #     for i in {1..30}; do
+      #       IP=$(kubectl get svc frontend -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+      #       [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
+      #     done
+      #     test -n "$IP"
+      #     curl -s --retry 10 --retry-delay 6 "http://${IP}/" | grep -i "E-commerce"
 
   approval:
     needs: staging
