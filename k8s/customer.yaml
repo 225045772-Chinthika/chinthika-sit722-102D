@@ -55,4 +55,4 @@ spec:
   selector: { app: customer-svc }
   ports:
     - port: 8002
-      targetPort: 8002
+      targetPort: 8000
