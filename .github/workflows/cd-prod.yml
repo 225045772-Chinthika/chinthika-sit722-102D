@@ -67,24 +67,12 @@ jobs:
             test "$img" = "$expected"
           done
 
-      - name: Wait for rollouts (diag + self-heal)
-        env:
-          NS: ${{ env.NAMESPACE }}
+      - name: Wait for rollouts (non-blocking)
+        continue-on-error: true
         run: |
-          set -euo pipefail
-          for d in $(kubectl get deploy -n "$NS" -o name); do
-            echo ">>> Waiting on $d"
-            if ! kubectl rollout status "$d" -n "$NS" --timeout=600s; then
-              echo "::warning::$d rollout exceeded deadline; collecting diagnostics"
-              sel=$(kubectl get "$d" -n "$NS" -o go-template='{{range $k,$v := .spec.selector.matchLabels}}{{printf "%s=%s," $k $v}}{{end}}'); sel=${sel%,}
-              kubectl get deploy,rs,pods -l "$sel" -n "$NS" -o wide || true
-              kubectl logs -n "$NS" -l "$sel" --all-containers --tail=120 || true
-              # self-heal for stuck old pods
-              kubectl scale "$d" -n "$NS" --replicas=0
-              kubectl wait --for=delete pod -l "$sel" -n "$NS" --timeout=180s || true
-              kubectl scale "$d" -n "$NS" --replicas=1
-              kubectl rollout status "$d" -n "$NS" --timeout=600s || echo "::warning::$d still not fully ready; continuing"
-            fi
+          for d in $(kubectl get deploy -n "$NAMESPACE" -o name); do
+            kubectl rollout status "$d" -n "$NAMESPACE" --timeout=600s || \
+              echo "::warning::$d not fully ready"
           done
 
       - name: Show public URLs (nice to have)
