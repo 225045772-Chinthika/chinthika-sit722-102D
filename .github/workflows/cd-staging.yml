@@ -65,18 +65,34 @@ jobs:
           kubectl wait --for=condition=complete job/postgres-init -n sit722 --timeout=180s
           kubectl logs job/postgres-init -n sit722 || true
 
-      - name: Set images (auto-detect; fix double -service)
+      # - name: Set images (auto-detect; fix double -service)
+      #   run: |
+      #     set -euo pipefail
+      #     ACR="${ACR_NAME}.azurecr.io"
+      #     for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+      #       # container names in your YAML are: product-service, order-service, customer-service, frontend
+      #       cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
+      #       base="${cname%-service}"                   # strip ONE "-service" if present
+      #       repo="${ACR}/${base}-service:${HEAD_SHA}"  # ensure EXACTLY ONE "-service"
+      #       echo "Setting $d container=$cname -> $repo"
+      #       kubectl set image deploy/$d $cname=$repo -n sit722 --record
+      #     done 
+
+      - name: Set images (auto-detect; handle frontend)
         run: |
           set -euo pipefail
           ACR="${ACR_NAME}.azurecr.io"
           for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
-            # container names in your YAML are: product-service, order-service, customer-service, frontend
             cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
-            base="${cname%-service}"                   # strip ONE "-service" if present
-            repo="${ACR}/${base}-service:${HEAD_SHA}"  # ensure EXACTLY ONE "-service"
+            base="${cname%-service}"
+            if [ "$base" = "frontend" ]; then
+              repo="${ACR}/frontend:${HEAD_SHA}"
+            else
+              repo="${ACR}/${base}-service:${HEAD_SHA}"
+            fi
             echo "Setting $d container=$cname -> $repo"
-            kubectl set image deploy/$d $cname=$repo -n sit722 --record
-          done         
+            kubectl -n sit722 set image deploy/$d $cname=$repo --record
+          done        
 
       - name: Debug — list what is running
         run: |
