@@ -7,31 +7,34 @@ on:
     branches: [main]
     types: [closed]
 
-# Require the PR to have been merged (not just closed without merge)
+concurrency:
+  group: prod
+  cancel-in-progress: false
+
 jobs:
   deploy:
+    # Require it to be merged (not just closed)
     if: ${{ github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
-    environment: production   # optional: add protection rules in GitHub Environments
-    permissions:
-      id-token: write         # for azure/login OIDC
-      contents: read
-
     env:
-      ACR_NAME: ${{ secrets.ACR_NAME }}           
-      PROD_RG:  ${{ secrets.PROD_RG }}    
-      PROD_AKS: ${{ secrets.PROD_AKS }}  
-      NAMESPACE: sit722                    
-      HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+      ACR_NAME: ${{ secrets.ACR_NAME }}      # e.g. myacr (no .azurecr.io)
+      PROD_RG:  ${{ secrets.PROD_RG }}
+      PROD_AKS: ${{ secrets.PROD_AKS }}
+      NAMESPACE: sit722
+      HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}   # <-- define this
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure login (OIDC)
+      - name: Azure login
         uses: azure/login@v2
         with:
-          # same service principal as staging is fine, or a prod-specific one
           creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Make sure prod AKS can pull from your ACR (safe to run every time)
+      - name: Grant ACR pull to AKS (prod)
+        run: |
+          az aks update -g "$PROD_RG" -n "$PROD_AKS" --attach-acr "$ACR_NAME"
 
       - name: Get AKS credentials (prod)
         run: |
@@ -39,22 +42,23 @@ jobs:
 
       - name: Ensure namespace exists
         run: kubectl create namespace "$NAMESPACE" || true
-
-      - name: Grant ACR pull to AKS (prod)
-        run: |
-          az aks update -g "${{ secrets.PROD_RG }}" -n "${{ secrets.PROD_AKS }}" --attach-acr "${{ secrets.ACR_NAME }}"
-          
+       
       - name: Apply Kubernetes manifests
         run: kubectl apply -f k8s/ -n "$NAMESPACE"
 
-      - name: Set images to the merge commit (auto-detect; avoid double -service)
+      # NOTE: handle frontend specially (repo is 'frontend', not 'frontend-service')
+      - name: Set images to the merge commit (auto-detect; handle frontend)
         run: |
           set -euo pipefail
           ACR="${ACR_NAME}.azurecr.io"
           for d in $(kubectl get deploy -n "$NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
             cname=$(kubectl get deploy/$d -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].name}')
-            base="${cname%-service}"                          # strip ONE "-service" if present
-            repo="${ACR}/${base}-service:${HEAD_SHA}"         # ensure EXACTLY ONE "-service"
+            base="${cname%-service}"
+            if [ "$base" = "frontend" ]; then
+              repo="${ACR}/frontend:${HEAD_SHA}"
+            else
+              repo="${ACR}/${base}-service:${HEAD_SHA}"
+            fi
             echo "Setting $d container=$cname -> $repo"
             kubectl set image deploy/$d $cname=$repo -n "$NAMESPACE" --record
           done
@@ -66,7 +70,11 @@ jobs:
           for d in $(kubectl get deploy -n "$NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
             cname=$(kubectl get deploy/$d -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].name}')
             base="${cname%-service}"
-            expected="${ACR}/${base}-service:${HEAD_SHA}"
+            if [ "$base" = "frontend" ]; then
+              expected="${ACR}/frontend:${HEAD_SHA}"
+            else
+              expected="${ACR}/${base}-service:${HEAD_SHA}"
+            fi
             img=$(kubectl get deploy/$d -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}')
             echo "$d -> $img (expected $expected)"
             test "$img" = "$expected"
