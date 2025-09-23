@@ -111,9 +111,15 @@ jobs:
           TAG="${HEAD_SHA}"
           for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
             cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
-            base="${cname%-service}"
-            expected="${ACR}/${base}-service:${TAG}"
             IMG=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].image}')
+            base="${cname%-service}"
+
+            if [ "$base" = "frontend" ]; then
+              expected="${ACR}/frontend:${TAG}"
+            else
+              expected="${ACR}/${base}-service:${TAG}"
+            fi
+
             echo "$d container=$cname -> $IMG (expected $expected)"
             test "$IMG" = "$expected"
           done
@@ -213,9 +219,3 @@ jobs:
         run: |
           echo "Deleting RG: $RG"
           az group delete -n "$RG" --yes --no-wait
-
-      # - name: Destroy staging infra (always)
-      #   if: always()
-      #   working-directory: staging
-      #   run: |
-      #     tofu destroy -auto-approve -var "name_prefix=${NAME_PREFIX}" -var "location=${AZURE_LOCATION}"
