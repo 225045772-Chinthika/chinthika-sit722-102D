@@ -17,11 +17,11 @@ jobs:
     if: ${{ github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     env:
-      ACR_NAME: ${{ secrets.ACR_NAME }}      # e.g. myacr (no .azurecr.io)
+      ACR_NAME: ${{ secrets.ACR_NAME }}
       PROD_RG:  ${{ secrets.PROD_RG }}
       PROD_AKS: ${{ secrets.PROD_AKS }}
       NAMESPACE: sit722
-      HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}   # <-- define this
+      HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
 
     steps:
       - uses: actions/checkout@v4
@@ -51,12 +51,13 @@ jobs:
         run: |
           set -euo pipefail
           ACR="${ACR_NAME}.azurecr.io"
+
           for d in $(kubectl get deploy -n "$NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
             cname=$(kubectl get deploy/$d -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].name}')
-            base="${cname%-service}"
-            if [ "$base" = "frontend" ]; then
+            if [ "$cname" = "frontend" ]; then
               repo="${ACR}/frontend:${HEAD_SHA}"
             else
+              base="${cname%-service}"
               repo="${ACR}/${base}-service:${HEAD_SHA}"
             fi
             echo "Setting $d container=$cname -> $repo"
