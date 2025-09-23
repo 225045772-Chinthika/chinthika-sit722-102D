@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
 
-      # Install your app deps + pytest, then run tests (if present)
+      # Install app deps + pytest, then run tests
       - name: Install deps & run tests (${{ matrix.svc.name }})
         working-directory: ${{ matrix.svc.path }}
         if: ${{ hashFiles(format('{0}/requirements.txt', matrix.svc.path)) != '' }}
@@ -39,19 +39,16 @@ jobs:
           PRODUCT_SERVICE_URL:  http://localhost:8000
           ORDER_SERVICE_URL:    http://localhost:8001
           CUSTOMER_SERVICE_URL: http://localhost:8002
-          # DB settings used by your app on import (adjust names if your code uses different keys)
+          # DB settings
           POSTGRES_HOST: localhost
           POSTGRES_PORT: "5432"
           POSTGRES_DB: postgres
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          # Many templates also read a combined URL:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-          # In case your code gates cloud deps:
           AZURE_STORAGE_ACCOUNT_NAME: dummy
           AZURE_STORAGE_CONTAINER: dummy
           AZURE_STORAGE_ACCOUNT_KEY: dummy
-          # Helpful so Python can resolve local packages
           PYTHONPATH: ${{ matrix.svc.path }}
         run: |
           # install service deps (prefer dev reqs if present)
@@ -89,7 +86,7 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Ensure Docker is logged in to your ACR before pushing
+      # Ensure Docker is logged in to ACR before pushing
       - name: Azure Container Registry login
         run: az acr login -n ${{ secrets.ACR_NAME }}
 
@@ -104,7 +101,7 @@ jobs:
           tags: |
             ${{ env.ACR }}/frontend:${{ github.sha }}
 
-      # Backends: keep using their own dirs as context
+      # Backends: keep using own dirs as context
       - name: Build & push ${{ matrix.svc.name }}
         if: ${{ matrix.svc.name != 'frontend' && hashFiles(format('{0}/**', matrix.svc.path)) != '' }}
         uses: docker/build-push-action@v6

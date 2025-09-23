@@ -1,55 +1,86 @@
-name: CD - production (AKS persistent)
+name: CD Stage 3 (Production Deploy on PR Merge)
 
 on:
-  push:
-    branches: ["main"]
+  # Only when a PR targeting main is CLOSED
+  pull_request:
+    branches: [main]
+    types: [closed]
 
-env:
-  PROD_RG:  ${{ secrets.PROD_RG || 'sit722-prod-rg' }}
-  PROD_AKS: ${{ secrets.PROD_AKS || 'sit722-prod-aks' }}
-  ACR:      ${{ secrets.ACR_NAME }}.azurecr.io
-
+# Require the PR to have been merged (not just closed without merge)
 jobs:
-  deploy_prod:
+  deploy:
+    if: ${{ github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
+    environment: production   # optional: add protection rules in GitHub Environments
+    permissions:
+      id-token: write         # for azure/login OIDC
+      contents: read
+
+    env:
+      ACR_NAME: ${{ secrets.ACR_NAME }}           
+      PROD_RG:  ${{ secrets.PROD_RG }}    
+      PROD_AKS: ${{ secrets.PROD_AKS }}  
+      NAMESPACE: sit722                    
+      HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure login
+      - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
+          # same service principal as staging is fine, or a prod-specific one
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: AKS context (prod)
-        run: az aks get-credentials -g "$PROD_RG" -n "$PROD_AKS" --overwrite-existing
-
-      - name: Namespace, configmap, and prod secret
+      - name: Get AKS credentials (prod)
         run: |
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/configmaps.yaml
-          kubectl delete secret app-secrets -n sit722 --ignore-not-found
-          kubectl create secret generic app-secrets -n sit722 \
-            --from-literal=AZURE_STORAGE_ACCOUNT_KEY="${{ secrets.AZURE_STORAGE_ACCOUNT_KEY }}"
+          az aks get-credentials -g "$PROD_RG" -n "$PROD_AKS" --overwrite-existing
 
-      - name: Apply manifests
-        run: |
-          kubectl apply -f k8s/product.yaml
-          kubectl apply -f k8s/order.yaml
-          kubectl apply -f k8s/customer.yaml
-          kubectl apply -f k8s/frontend.yaml
+      - name: Ensure namespace exists
+        run: kubectl create namespace "$NAMESPACE" || true
 
-      - name: Set images to this commit
-        run: |
-          kubectl set image deploy/product-deploy  -n sit722 product-service=${{ env.ACR }}/product-service:${{ github.sha }}
-          kubectl set image deploy/order-deploy    -n sit722 order-service=${{ env.ACR }}/order-service:${{ github.sha }}
-          kubectl set image deploy/customer-deploy -n sit722 customer-service=${{ env.ACR }}/customer-service:${{ github.sha }}
-          kubectl set image deploy/frontend-deploy -n sit722 frontend=${{ env.ACR }}/frontend:${{ github.sha }}
+      - name: Apply Kubernetes manifests
+        run: kubectl apply -f k8s/ -n "$NAMESPACE"
 
-      - name: Verify product endpoint (log first line)
+      - name: Set images to the merge commit (auto-detect; avoid double -service)
         run: |
-          for i in {1..30}; do
-            PIP=$(kubectl get svc -n sit722 product-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            [ -n "$PIP" ] && break || sleep 10
+          set -euo pipefail
+          ACR="${ACR_NAME}.azurecr.io"
+          for d in $(kubectl get deploy -n "$NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            cname=$(kubectl get deploy/$d -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].name}')
+            base="${cname%-service}"                          # strip ONE "-service" if present
+            repo="${ACR}/${base}-service:${HEAD_SHA}"         # ensure EXACTLY ONE "-service"
+            echo "Setting $d container=$cname -> $repo"
+            kubectl set image deploy/$d $cname=$repo -n "$NAMESPACE" --record
           done
-          echo "Product service IP: $PIP"
-          curl -fsS "http://$PIP:8000/" | head -n1
+
+      - name: Verify images are the merge commit
+        run: |
+          set -euo pipefail
+          ACR="${ACR_NAME}.azurecr.io"
+          for d in $(kubectl get deploy -n "$NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            cname=$(kubectl get deploy/$d -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].name}')
+            base="${cname%-service}"
+            expected="${ACR}/${base}-service:${HEAD_SHA}"
+            img=$(kubectl get deploy/$d -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}')
+            echo "$d -> $img (expected $expected)"
+            test "$img" = "$expected"
+          done
+
+      - name: Wait for rollouts (all deployments)
+        run: |
+          set -e
+          for d in $(kubectl get deploy -n "$NAMESPACE" -o name); do
+            echo "Rolling out $d"
+            kubectl rollout status "$d" -n "$NAMESPACE" --timeout=600s
+          done
+
+      - name: Show public URLs (nice to have)
+        run: |
+          for s in product-service order-service customer-service; do
+            ip=$(kubectl get svc $s -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            port=$(kubectl get svc $s -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].port}')
+            echo "$s => http://$ip:$port/"
+          done
+          ipf=$(kubectl get svc frontend -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "frontend => http://$ipf/"
