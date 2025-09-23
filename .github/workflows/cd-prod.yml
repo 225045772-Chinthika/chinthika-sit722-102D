@@ -2,10 +2,10 @@ name: CD Stage 3 (Production Deploy on PR Merge)
 #test
 
 on:
-  # Only when a PR targeting main is closed
-  pull_request:
+  workflow_run:
+    workflows: ["CI Main"]
     branches: [main]
-    types: [closed]
+    types: [completed]
 
 concurrency:
   group: prod
@@ -13,19 +13,17 @@ concurrency:
 
 jobs:
   deploy:
-    # Require it to be merged (not just closed)
-    if: ${{ github.event.pull_request.merged == true }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
       ACR_NAME: ${{ secrets.ACR_NAME }}
       PROD_RG:  ${{ secrets.PROD_RG }}
       PROD_AKS: ${{ secrets.PROD_AKS }}
       NAMESPACE: sit722
-      HEAD_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
 
     steps:
       - uses: actions/checkout@v4
-
       - name: Azure login
         uses: azure/login@v2
         with:
@@ -39,6 +37,31 @@ jobs:
       - name: Get AKS credentials (prod)
         run: |
           az aks get-credentials -g "$PROD_RG" -n "$PROD_AKS" --overwrite-existing
+
+      - name: Wait for CI images to arrive in ACR
+        env:
+          ACR_NAME:  ${{ secrets.ACR_NAME }}
+          HEAD_SHA:  ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          for repo in product-service order-service customer-service frontend; do
+            echo "Waiting for $repo:$HEAD_SHA in ACR $ACR_NAME..."
+            found=false
+            for i in {1..30}; do
+              if az acr repository show-tags -n "$ACR_NAME" \
+                   --repository "$repo" \
+                   --query "contains(@, '$HEAD_SHA')" -o tsv | grep -q true; then
+                echo "Found $repo:$HEAD_SHA"
+                found=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "$found" != true ]; then
+              echo "::error::Tag $repo:$HEAD_SHA not found in ACR"
+              exit 1
+            fi
+          done
 
       - name: Ensure namespace exists
         run: kubectl create namespace "$NAMESPACE" || true
