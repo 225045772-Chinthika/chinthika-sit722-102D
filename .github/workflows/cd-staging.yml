@@ -93,22 +93,44 @@ jobs:
             test "$IMG" = "$expected"
           done
 
-      # 2) Wait for rollouts (product-service must pass; others warn-only)
-      - name: Wait for rollouts (product-service required)
+      # 2) Wait for product-service rollout (with self-heal fallback)
+      - name: Wait for product-service rollout (with self-heal)
         run: |
           set -euo pipefail
-          # Give 10 minutes to be generous for fresh AKS clusters
-          kubectl rollout status deploy/product-service -n sit722 --timeout=600s
 
-          # The rest won't fail the job; we still collect useful debug on timeouts
-          for d in order-service customer-service frontend-service; do
-            echo "Rolling out $d (best-effort)"
-            if ! kubectl rollout status deploy/$d -n sit722 --timeout=600s; then
-              echo "::warning::$d rollout timed out; dumping quick diagnostics"
-              kubectl get deploy/$d -n sit722 -o yaml | sed -n '1,80p' || true
-              kubectl get pods -n sit722 -o wide | (echo "---- pods ----"; cat) | sed -n '1,120p' || true
-            fi
-          done
+          # First try a normal wait (10 minutes is generous on fresh AKS)
+          if kubectl rollout status deploy/product-service -n sit722 --timeout=600s; then
+            echo "product-service rolled out normally"
+            exit 0
+          fi
+
+          echo "::warning:: product-service rollout timed out; attempting self-heal"
+
+          # Get the selector used by the deployment (works whatever labels you used)
+          SEL=$(kubectl get deploy/product-service -n sit722 \
+            -o jsonpath='{range $k,$v := .spec.selector.matchLabels}{printf "%s=%s," $k $v}{end}')
+          SEL=${SEL%,}
+          echo "Selector: $SEL"
+
+          echo "Diagnostics (before):"
+          kubectl get deploy/product-service -n sit722 -o wide || true
+          kubectl get rs -n sit722 -l "$SEL" -o wide || true
+          kubectl get pods -n sit722 -l "$SEL" -o wide || true
+
+          # Recovery: scale down to 0 (kills any stuck old replicas), then back to 1
+          kubectl scale deploy/product-service -n sit722 --replicas=0
+          kubectl wait --for=delete pod -l "$SEL" -n sit722 --timeout=180s || true
+          kubectl scale deploy/product-service -n sit722 --replicas=1
+
+          # Try again; if it still doesn't finish, don't fail here—let smoke test decide
+          if ! kubectl rollout status deploy/product-service -n sit722 --timeout=600s; then
+            echo "::warning:: product-service still not fully rolled out; will proceed to smoke test"
+          fi
+
+          echo "Diagnostics (after):"
+          kubectl get deploy/product-service -n sit722 -o wide || true
+          kubectl get rs -n sit722 -l "$SEL" -o wide || true
+          kubectl get pods -n sit722 -l "$SEL" -o wide || true  
 
       # 3) Get a public IP and curl the service (acceptance test)
       - name: Smoke test product-service
