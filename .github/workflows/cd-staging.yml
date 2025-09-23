@@ -59,6 +59,12 @@ jobs:
           # apply your manifests (services, deployments, etc.)
           kubectl apply -f k8s/ -n sit722
 
+      - name: Create DBs (orders, customers)
+        run: |
+          kubectl apply -f k8s/postgres-initjob.yaml -n sit722
+          kubectl wait --for=condition=complete job/postgres-init -n sit722 --timeout=180s
+          kubectl logs job/postgres-init -n sit722 || true
+
       - name: Set images (auto-detect; fix double -service)
         run: |
           set -euo pipefail

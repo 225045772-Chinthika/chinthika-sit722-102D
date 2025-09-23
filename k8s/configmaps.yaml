@@ -6,3 +6,14 @@ metadata:
 data:
   AZURE_STORAGE_ACCOUNT_NAME: "sit722storageprod"
   AZURE_STORAGE_CONTAINER: "product-images"
+
+  PRODUCT_API: "http://product-service:8000"
+  ORDER_API: "http://order-service:8001"
+  CUSTOMER_API: "http://customer-service:8002"
+
+  REACT_APP_PRODUCT_API: "http://product-service:8000"
+  REACT_APP_ORDER_API: "http://order-service:8001"
+  REACT_APP_CUSTOMER_API: "http://customer-service:8002"
+  VITE_PRODUCT_API: "http://product-service:8000"
+  VITE_ORDER_API: "http://order-service:8001"
+  VITE_CUSTOMER_API: "http://customer-service:8002"
