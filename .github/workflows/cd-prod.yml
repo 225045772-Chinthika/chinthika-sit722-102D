@@ -1,7 +1,7 @@
 name: CD Stage 3 (Production Deploy on PR Merge)
 
 on:
-  # Only when a PR targeting main is CLOSED
+  # Only when a PR targeting main is closed
   pull_request:
     branches: [main]
     types: [closed]
