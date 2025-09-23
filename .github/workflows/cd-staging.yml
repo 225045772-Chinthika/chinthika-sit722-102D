@@ -59,16 +59,18 @@ jobs:
           # apply your manifests (services, deployments, etc.)
           kubectl apply -f k8s/ -n sit722
 
-      - name: Set images (auto-detect container names)
+      - name: Set images (auto-detect; fix double -service)
         run: |
           set -euo pipefail
           ACR="${ACR_NAME}.azurecr.io"
           for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            # container names in your YAML are: product-service, order-service, customer-service, frontend
             cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
-            repo="${ACR}/${cname}-service:${HEAD_SHA}"
+            base="${cname%-service}"                   # strip ONE "-service" if present
+            repo="${ACR}/${base}-service:${HEAD_SHA}"  # ensure EXACTLY ONE "-service"
             echo "Setting $d container=$cname -> $repo"
             kubectl set image deploy/$d $cname=$repo -n sit722 --record
-          done          
+          done         
 
       - name: Debug — list what is running
         run: |
@@ -87,7 +89,8 @@ jobs:
           TAG="${HEAD_SHA}"
           for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
             cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
-            expected="${ACR}/${cname}-service:${TAG}"
+            base="${cname%-service}"
+            expected="${ACR}/${base}-service:${TAG}"
             IMG=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].image}')
             echo "$d container=$cname -> $IMG (expected $expected)"
             test "$IMG" = "$expected"
