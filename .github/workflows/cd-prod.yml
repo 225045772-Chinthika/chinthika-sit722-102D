@@ -67,13 +67,12 @@ jobs:
             test "$img" = "$expected"
           done
 
-      - name: Wait for rollouts (non-blocking)
+      - name: Quick diagnostics (non-blocking)
         continue-on-error: true
         run: |
-          for d in $(kubectl get deploy -n "$NAMESPACE" -o name); do
-            kubectl rollout status "$d" -n "$NAMESPACE" --timeout=600s || \
-              echo "::warning::$d not fully ready"
-          done
+          kubectl get deploy -n "$NAMESPACE" -o wide || true
+          kubectl get pods   -n "$NAMESPACE" -o wide || true
+          kubectl get svc    -n "$NAMESPACE" -o wide || true
 
       - name: Show public URLs (nice to have)
         run: |
