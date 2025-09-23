@@ -60,26 +60,55 @@ jobs:
           kubectl set image deployment/product-service  product=${ACR_NAME}.azurecr.io/product-service:${HEAD_SHA}       -n sit722 --record || true
           kubectl set image deployment/order-service    order=${ACR_NAME}.azurecr.io/order-service:${HEAD_SHA}           -n sit722 --record || true
           kubectl set image deployment/customer-service customer=${ACR_NAME}.azurecr.io/customer-service:${HEAD_SHA}     -n sit722 --record || true
-          # (add frontend if you want to test it here too)
+          kubectl set image deployment/frontend-service frontend=${ACR_NAME}.azurecr.io/frontend-service:${HEAD_SHA} -n sit722 --record || true
 
-      - name: Wait for rollouts
+      - name: Debug — list what is running
         run: |
-          kubectl rollout status deployment/product-service  -n sit722 --timeout=300s
-          kubectl rollout status deployment/order-service    -n sit722 --timeout=300s
-          kubectl rollout status deployment/customer-service -n sit722 --timeout=300s
+          echo "== Deployments =="
+          kubectl get deploy -n sit722 -o wide || true
+          echo "== Services =="
+          kubectl get svc -n sit722 -o wide || true
+          echo "== Pods =="
+          kubectl get pods -n sit722 -o wide || true
 
-      - name: Smoke test (product-service LB)
+      # 1) Prove the correct image tag is running
+      - name: Verify images are the commit tag on each deployment
         run: |
-          # Wait for external IP
+          TAG=${{ github.event.workflow_run.head_sha }}
+          for d in product-service order-service customer-service frontend-service; do
+            IMG=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].image}')
+            echo "$d -> $IMG"
+            test "$IMG" = "${{ secrets.ACR_NAME }}.azurecr.io/${d%*-service}-service:${TAG}" || \
+            test "$d" = "frontend-service" -a "$IMG" = "${{ secrets.ACR_NAME }}.azurecr.io/frontend-service:${TAG}"
+          done
+
+      # 2) Wait for rollouts (all deployments in namespace)
+      - name: Wait for rollouts (all deployments in namespace)
+        run: |
+          set -e
+          for d in $(kubectl get deploy -n sit722 -o name); do
+            echo "Rolling out $d"
+            kubectl rollout status "$d" -n sit722 --timeout=300s
+          done
+
+      # 3) Get a public IP and curl the service (acceptance test)
+      - name: Smoke test product-service
+        run: |
           for i in {1..30}; do
             IP=$(kubectl get svc product-service -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            if [ -n "$IP" ]; then echo "IP=$IP"; break; fi
-            echo "Waiting for LoadBalancer IP..."; sleep 10
+            [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
           done
           test -n "$IP"
+          curl -s --retry 10 --retry-delay 6 "http://$IP/" | grep -i "Welcome"
 
-          # Simple acceptance test — look for a welcome string
-          curl -s --retry 10 --retry-delay 6 "http://${IP}/" | grep -i "welcome"
+      - name: Smoke test frontend
+        run: |
+          for i in {1..30}; do
+            IP=$(kubectl get svc frontend-service -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
+          done
+          test -n "$IP"
+          curl -s --retry 10 --retry-delay 6 "http://${IP}/" | grep -i "E-commerce"
 
       - name: Destroy staging infra (always)
         if: always()
