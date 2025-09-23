@@ -39,6 +39,10 @@ jobs:
       - name: Ensure namespace exists
         run: kubectl create namespace "$NAMESPACE" || true
 
+      - name: Grant ACR pull to AKS (prod)
+        run: |
+          az aks update -g "${{ secrets.PROD_RG }}" -n "${{ secrets.PROD_AKS }}" --attach-acr "${{ secrets.ACR_NAME }}"
+          
       - name: Apply Kubernetes manifests
         run: kubectl apply -f k8s/ -n "$NAMESPACE"
 
