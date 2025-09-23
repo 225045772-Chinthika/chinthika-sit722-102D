@@ -56,11 +56,16 @@ jobs:
           # apply your manifests (services, deployments, etc.)
           kubectl apply -f k8s/ -n sit722
 
-          # set commit-tagged images pushed by CI
-          kubectl set image deployment/product-service  product=${ACR_NAME}.azurecr.io/product-service:${HEAD_SHA}       -n sit722 --record || true
-          kubectl set image deployment/order-service    order=${ACR_NAME}.azurecr.io/order-service:${HEAD_SHA}           -n sit722 --record || true
-          kubectl set image deployment/customer-service customer=${ACR_NAME}.azurecr.io/customer-service:${HEAD_SHA}     -n sit722 --record || true
-          kubectl set image deployment/frontend-service frontend=${ACR_NAME}.azurecr.io/frontend-service:${HEAD_SHA} -n sit722 --record || true
+      - name: Set images (auto-detect container names)
+        run: |
+          set -euo pipefail
+          ACR="${ACR_NAME}.azurecr.io"
+          for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
+            repo="${ACR}/${cname}-service:${HEAD_SHA}"
+            echo "Setting $d container=$cname -> $repo"
+            kubectl set image deploy/$d $cname=$repo -n sit722 --record
+          done          
 
       - name: Debug — list what is running
         run: |
@@ -74,12 +79,15 @@ jobs:
       # 1) Prove the correct image tag is running
       - name: Verify images are the commit tag on each deployment
         run: |
-          TAG=${{ github.event.workflow_run.head_sha }}
-          for d in product-service order-service customer-service frontend-service; do
+          set -euo pipefail
+          ACR="${ACR_NAME}.azurecr.io"
+          TAG="${HEAD_SHA}"
+          for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
+            expected="${ACR}/${cname}-service:${TAG}"
             IMG=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].image}')
-            echo "$d -> $IMG"
-            test "$IMG" = "${{ secrets.ACR_NAME }}.azurecr.io/${d%*-service}-service:${TAG}" || \
-            test "$d" = "frontend-service" -a "$IMG" = "${{ secrets.ACR_NAME }}.azurecr.io/frontend-service:${TAG}"
+            echo "$d container=$cname -> $IMG (expected $expected)"
+            test "$IMG" = "$expected"
           done
 
       # 2) Wait for rollouts (all deployments in namespace)
