@@ -1,0 +1,8 @@
+apiVersion: v1
+type: Opaque
+kind: Secret
+metadata:
+  name: pg-url
+  namespace: sit722
+stringData:
+  url: postgresql://postgres:postgres@postgres:5432/products
