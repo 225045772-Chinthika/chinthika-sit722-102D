@@ -104,6 +104,46 @@ jobs:
             test "$img" = "$expected"
           done
 
+      - name: Smoke test (inside the cluster)
+        run: |
+          set -e
+          N="${NAMESPACE:-sit722}"
+
+          # Create a one-shot job that curls the 3 services
+          cat <<'YAML' | kubectl -n "$N" apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: prod-smoke
+          spec:
+            backoffLimit: 0
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                - name: curl
+                  image: curlimages/curl:8.5.0
+                  command: ["sh","-lc"]
+                  args:
+                    - |
+                      set -e
+                      for u in \
+                        http://product-service:8000/ \
+                        http://order-service:8001/ \
+                        http://customer-service:8002/; do
+                        echo ">>> $u"
+                        curl -fsS "$u"
+                        echo
+                      done
+          YAML
+
+
+          # Wait, print logs, and clean up
+          kubectl -n "$N" wait --for=condition=complete job/prod-smoke --timeout=180s
+          echo "----- Smoke test output -----"
+          kubectl -n "$N" logs job/prod-smoke
+          kubectl -n "$N" delete job prod-smoke --ignore-not-found
+
       - name: Quick diagnostics (non-blocking)
         continue-on-error: true
         run: |
