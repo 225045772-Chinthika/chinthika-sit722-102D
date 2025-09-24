@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: product-service
+  name: product-deploy
   namespace: sit722
 spec:
   replicas: 1
@@ -13,7 +13,7 @@ spec:
     spec:
       containers:
       - name: product-service
-        image: ${ACR_NAME}.azurecr.io/product-service:latest
+        image: sit722prodacr.azurecr.io/product-service:latest
         imagePullPolicy: IfNotPresent
         ports: [{ containerPort: 8000 }]
         env:
@@ -41,9 +41,9 @@ spec:
         - name: POSTGRES_USER
           valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_USER } }
         - name: POSTGRES_PASSWORD
-          valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_PASSWORD } }  
+          valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_PASSWORD } }    
         - name: DATABASE_URL
-          valueFrom: { secretKeyRef: { name: pg-url, key: url } }      
+          valueFrom: { secretKeyRef: { name: pg-url, key: url } }    
 ---
 apiVersion: v1
 kind: Service

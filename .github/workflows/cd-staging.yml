@@ -2,9 +2,9 @@ name: CD Stage 2 (Ephemeral Staging)
 
 on:
   workflow_run:
-    workflows: ["CI Testing"]
+    workflows: ["CI Testing"]     # must match your CI name from step 0
     types: [completed]
-    branches: [testing] 
+    branches: [testing]           # only when CI on testing finishes
 
 jobs:
   staging:
@@ -14,7 +14,7 @@ jobs:
       rg:  ${{ steps.aks.outputs.RG }}
       aks: ${{ steps.aks.outputs.AKS }}
     env:
-      ACR_NAME: ${{ secrets.ACR_NAME }}  
+      ACR_NAME: ${{ secrets.ACR_NAME }}                 # e.g. myprodacr (no .azurecr.io)
       AZURE_LOCATION: ${{ secrets.AZURE_LOCATION || 'australiaeast' }}
       NAME_PREFIX: sit722-${{ github.run_id }}
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -24,7 +24,7 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}  
+          creds: ${{ secrets.AZURE_CREDENTIALS }}       # SP JSON
 
       - name: Set up OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -65,21 +65,18 @@ jobs:
           kubectl wait --for=condition=complete job/postgres-init -n sit722 --timeout=180s
           kubectl logs job/postgres-init -n sit722 || true
 
-      - name: Set images (auto-detect; handle frontend)
+      - name: Set images (auto-detect; fix double -service)
         run: |
           set -euo pipefail
           ACR="${ACR_NAME}.azurecr.io"
           for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            # container names in your YAML are: product-service, order-service, customer-service, frontend
             cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
-            base="${cname%-service}"
-            if [ "$base" = "frontend" ]; then
-              repo="${ACR}/frontend:${HEAD_SHA}"
-            else
-              repo="${ACR}/${base}-service:${HEAD_SHA}"
-            fi
+            base="${cname%-service}"                   # strip ONE "-service" if present
+            repo="${ACR}/${base}-service:${HEAD_SHA}"  # ensure EXACTLY ONE "-service"
             echo "Setting $d container=$cname -> $repo"
-            kubectl -n sit722 set image deploy/$d $cname=$repo --record
-          done        
+            kubectl set image deploy/$d $cname=$repo -n sit722 --record
+          done         
 
       - name: Debug — list what is running
         run: |
@@ -111,7 +108,41 @@ jobs:
             test "$IMG" = "$expected"
           done
 
-    # 2) Wait for product-service rollout (with self-heal fallback) 
+    # 2) Wait for product-service rollout (with self-heal fallback)
+      # - name: Wait for product-service rollout (with self-heal)
+      #   run: |
+      #     set -euo pipefail
+
+      #     if kubectl rollout status deploy/product-service -n sit722 --timeout=600s; then
+      #       echo "product-service rolled out normally"
+      #       exit 0
+      #     fi
+
+      #     echo "::warning:: product-service rollout timed out; attempting self-heal"
+
+      #     # NOTE: go-template (not jsonpath)
+      #     SEL=$(kubectl get deploy/product-service -n sit722 \
+      #       -o go-template='{{range $k,$v := .spec.selector.matchLabels}}{{printf "%s=%s," $k $v}}{{end}}')
+      #     SEL=${SEL%,}
+      #     echo "Selector: $SEL"
+
+      #     echo "Diagnostics (before):"
+      #     kubectl get deploy/product-service -n sit722 -o wide || true
+      #     kubectl get rs -n sit722 -l "$SEL" -o wide || true
+      #     kubectl get pods -n sit722 -l "$SEL" -o wide || true
+
+      #     kubectl scale deploy/product-service -n sit722 --replicas=0
+      #     kubectl wait --for=delete pod -l "$SEL" -n sit722 --timeout=180s || true
+      #     kubectl scale deploy/product-service -n sit722 --replicas=1
+
+      #     if ! kubectl rollout status deploy/product-service -n sit722 --timeout=600s; then
+      #       echo "::warning:: product-service still not fully rolled out; will proceed to smoke test"
+      #     fi
+
+      #     echo "Diagnostics (after):"
+      #     kubectl get deploy/product-service -n sit722 -o wide || true
+      #     kubectl get rs -n sit722 -l "$SEL" -o wide || true
+      #     kubectl get pods -n sit722 -l "$SEL" -o wide || true 
       - name: Wait for product-service rollout (best-effort)
         run: |
           kubectl rollout status deploy/product-service -n sit722 --timeout=600s \
@@ -155,7 +186,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging-approval
     steps:
-      - run: echo "Click 'Review deployments' and Approve when manual testing in the Portal is completed."
+      - run: echo "Click 'Review deployments' and Approve when you're done manual testing in the Portal."
 
   cleanup:
     needs: [staging, approval]
@@ -172,3 +203,9 @@ jobs:
         run: |
           echo "Deleting RG: $RG"
           az group delete -n "$RG" --yes --no-wait
+
+      # - name: Destroy staging infra (always)
+      #   if: always()
+      #   working-directory: staging
+      #   run: |
+      #     tofu destroy -auto-approve -var "name_prefix=${NAME_PREFIX}" -var "location=${AZURE_LOCATION}"

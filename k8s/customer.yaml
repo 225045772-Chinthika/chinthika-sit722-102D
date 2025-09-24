@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: customer-service
+  name: customer-deploy
   namespace: sit722
 spec:
   replicas: 1
@@ -13,37 +13,9 @@ spec:
     spec:
       containers:
       - name: customer-service
-        image: ${ACR_NAME}.azurecr.io/customer-service:latest
+        image: sit722prodacr.azurecr.io/customer-service:latest
         imagePullPolicy: IfNotPresent
         ports: [{ containerPort: 8000 }]
-        env:
-        - name: AZURE_STORAGE_ACCOUNT_NAME
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: AZURE_STORAGE_ACCOUNT_NAME
-        - name: AZURE_STORAGE_CONTAINER
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: AZURE_STORAGE_CONTAINER
-        - name: AZURE_STORAGE_ACCOUNT_KEY
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: AZURE_STORAGE_ACCOUNT_KEY
-        - name: DATABASE_URL
-          value: postgresql://postgres:postgres@postgres:5432/customers
-        - name: POSTGRES_HOST
-          value: postgres
-        - name: POSTGRES_PORT
-          value: "5432"
-        - name: POSTGRES_DB
-          value: customers
-        - name: POSTGRES_USER
-          valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_USER } }
-        - name: POSTGRES_PASSWORD
-          valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_PASSWORD } }   
 ---
 apiVersion: v1
 kind: Service

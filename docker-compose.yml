@@ -4,7 +4,7 @@ services:
     build: ./backend/product-service
     ports: ["8000:8000"]
     environment:
-      - AZURE_STORAGE_ACCOUNT_NAME=sit722storageprod
+      - AZURE_STORAGE_ACCOUNT_NAME=sit722prodstorage
       - AZURE_STORAGE_CONTAINER=product-images
       - AZURE_STORAGE_ACCOUNT_KEY=REPLACE_WITH_LOCAL_DEV_KEY
   order:
