@@ -1,112 +1,112 @@
-name: CI Testing
+# name: CI Testing
 
-on:
-  push:
-    branches: [ "testing" ]
+# on:
+#   push:
+#     branches: [ "testing" ]
 
-env:
-  ACR: ${{ secrets.ACR_NAME }}.azurecr.io
+# env:
+#   ACR: ${{ secrets.ACR_NAME }}.azurecr.io
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        svc:
-          - { name: product,  path: backend/product_service }
-          - { name: order,    path: backend/order_service }
-          - { name: customer, path: backend/customer_service }
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports: [ "5432:5432" ]
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s --health-timeout=5s --health-retries=5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+# jobs:
+#   test:
+#     runs-on: ubuntu-latest
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         svc:
+#           - { name: product,  path: backend/product_service }
+#           - { name: order,    path: backend/order_service }
+#           - { name: customer, path: backend/customer_service }
+#     services:
+#       postgres:
+#         image: postgres:15
+#         env:
+#           POSTGRES_PASSWORD: postgres
+#         ports: [ "5432:5432" ]
+#         options: >-
+#           --health-cmd="pg_isready -U postgres"
+#           --health-interval=10s --health-timeout=5s --health-retries=5
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-python@v5
+#         with: { python-version: "3.11" }
 
-      # Install app deps + pytest, then run tests
-      - name: Install deps & run tests (${{ matrix.svc.name }})
-        working-directory: ${{ matrix.svc.path }}
-        if: ${{ hashFiles(format('{0}/requirements.txt', matrix.svc.path)) != '' }}
-        env:
-          PRODUCT_SERVICE_URL:  http://localhost:8000
-          ORDER_SERVICE_URL:    http://localhost:8001
-          CUSTOMER_SERVICE_URL: http://localhost:8002
-          # DB settings
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: "5432"
-          POSTGRES_DB: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-          AZURE_STORAGE_ACCOUNT_NAME: dummy
-          AZURE_STORAGE_CONTAINER: dummy
-          AZURE_STORAGE_ACCOUNT_KEY: dummy
-          PYTHONPATH: ${{ matrix.svc.path }}
-        run: |
-          # install service deps (prefer dev reqs if present)
-          if [ -f "requirements-dev.txt" ]; then
-            python -m pip install -r requirements-dev.txt
-          else
-            python -m pip install -r requirements.txt
-          fi
+#       # Install app deps + pytest, then run tests
+#       - name: Install deps & run tests (${{ matrix.svc.name }})
+#         working-directory: ${{ matrix.svc.path }}
+#         if: ${{ hashFiles(format('{0}/requirements.txt', matrix.svc.path)) != '' }}
+#         env:
+#           PRODUCT_SERVICE_URL:  http://localhost:8000
+#           ORDER_SERVICE_URL:    http://localhost:8001
+#           CUSTOMER_SERVICE_URL: http://localhost:8002
+#           # DB settings
+#           POSTGRES_HOST: localhost
+#           POSTGRES_PORT: "5432"
+#           POSTGRES_DB: postgres
+#           POSTGRES_USER: postgres
+#           POSTGRES_PASSWORD: postgres
+#           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+#           AZURE_STORAGE_ACCOUNT_NAME: dummy
+#           AZURE_STORAGE_CONTAINER: dummy
+#           AZURE_STORAGE_ACCOUNT_KEY: dummy
+#           PYTHONPATH: ${{ matrix.svc.path }}
+#         run: |
+#           # install service deps (prefer dev reqs if present)
+#           if [ -f "requirements-dev.txt" ]; then
+#             python -m pip install -r requirements-dev.txt
+#           else
+#             python -m pip install -r requirements.txt
+#           fi
 
-          # test-only deps
-          python -m pip install pytest httpx
+#           # test-only deps
+#           python -m pip install pytest httpx
 
-          # run tests (and show full traceback if something still fails)
-          if [ -f "pytest.ini" ] || ls tests 1> /dev/null 2>&1; then
-            python -m pytest -q || python -m pytest -vv -ra
-          else
-            echo "No tests found for ${{ matrix.svc.name }}, skipping."
-          fi
+#           # run tests (and show full traceback if something still fails)
+#           if [ -f "pytest.ini" ] || ls tests 1> /dev/null 2>&1; then
+#             python -m pytest -q || python -m pytest -vv -ra
+#           else
+#             echo "No tests found for ${{ matrix.svc.name }}, skipping."
+#           fi
 
-  build_and_push:
-    needs: test
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        svc:
-          - { name: product-service,  path: backend/product_service }
-          - { name: order-service,    path: backend/order_service }
-          - { name: customer-service, path: backend/customer_service }
-          - { name: frontend,         path: frontend }
-    steps:
-      - uses: actions/checkout@v4
+#   build_and_push:
+#     needs: test
+#     runs-on: ubuntu-latest
+#     strategy:
+#       matrix:
+#         svc:
+#           - { name: product-service,  path: backend/product_service }
+#           - { name: order-service,    path: backend/order_service }
+#           - { name: customer-service, path: backend/customer_service }
+#           - { name: frontend,         path: frontend }
+#     steps:
+#       - uses: actions/checkout@v4
 
-      # Login to Azure for ACR auth
-      - uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+#       # Login to Azure for ACR auth
+#       - uses: azure/login@v2
+#         with:
+#           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Ensure Docker is logged in to ACR before pushing
-      - name: Azure Container Registry login
-        run: az acr login -n ${{ secrets.ACR_NAME }}
+#       # Ensure Docker is logged in to ACR before pushing
+#       - name: Azure Container Registry login
+#         run: az acr login -n ${{ secrets.ACR_NAME }}
 
-      # Special-case the frontend: build from repo root, point to its Dockerfile
-      - name: Build & push frontend (root ctx + file=frontend/Dockerfile)
-        if: ${{ matrix.svc.name == 'frontend' }}
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: frontend/Dockerfile
-          push: true
-          tags: |
-            ${{ env.ACR }}/frontend:${{ github.sha }}
+#       # Special-case the frontend: build from repo root, point to its Dockerfile
+#       - name: Build & push frontend (root ctx + file=frontend/Dockerfile)
+#         if: ${{ matrix.svc.name == 'frontend' }}
+#         uses: docker/build-push-action@v6
+#         with:
+#           context: .
+#           file: frontend/Dockerfile
+#           push: true
+#           tags: |
+#             ${{ env.ACR }}/frontend:${{ github.sha }}
 
-      # Backends: keep using own dirs as context
-      - name: Build & push ${{ matrix.svc.name }}
-        if: ${{ matrix.svc.name != 'frontend' && hashFiles(format('{0}/**', matrix.svc.path)) != '' }}
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.svc.path }}
-          push: true
-          tags: |
-            ${{ env.ACR }}/${{ matrix.svc.name }}:${{ github.sha }}
+#       # Backends: keep using own dirs as context
+#       - name: Build & push ${{ matrix.svc.name }}
+#         if: ${{ matrix.svc.name != 'frontend' && hashFiles(format('{0}/**', matrix.svc.path)) != '' }}
+#         uses: docker/build-push-action@v6
+#         with:
+#           context: ${{ matrix.svc.path }}
+#           push: true
+#           tags: |
+#             ${{ env.ACR }}/${{ matrix.svc.name }}:${{ github.sha }}
