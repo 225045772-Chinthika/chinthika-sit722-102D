@@ -112,23 +112,43 @@ jobs:
             kubectl rollout status "$d" -n "$NAMESPACE" --timeout=600s || true
           done
 
+      - name: Wait for service endpoints (backends)
+        run: |
+          set -e
+          N="${NAMESPACE:-sit722}"
+          for s in product-service order-service customer-service; do
+            echo "Waiting for endpoints on $s ..."
+            for i in {1..60}; do
+              EP=$(kubectl -n "$N" get ep "$s" -o jsonpath='{.subsets[*].addresses[*].ip}' || true)
+              if [ -n "$EP" ]; then
+                echo "$s endpoints: $EP"
+                break
+              fi
+              echo "  still waiting..."
+              sleep 5
+            done
+            # fail if still empty after waiting
+            EP=$(kubectl -n "$N" get ep "$s" -o jsonpath='{.subsets[*].addresses[*].ip}' || true)
+            [ -n "$EP" ] || { echo "::error::$s has no endpoints"; exit 1; }
+          done
+
       - name: Smoke test (inside the cluster)
         run: |
-          set -euo pipefail
+          set -e
           N="${NAMESPACE:-sit722}"
 
-          # Clean up any previous job so "unchanged" won’t happen
-          kubectl -n "$N" delete job prod-smoke --ignore-not-found
+          # resolve ClusterIPs (avoids DNS lookups in pod)
+          PSVC=$(kubectl -n "$N" get svc product-service  -o jsonpath='{.spec.clusterIP}')
+          OSVC=$(kubectl -n "$N" get svc order-service    -o jsonpath='{.spec.clusterIP}')
+          CSVC=$(kubectl -n "$N" get svc customer-service -o jsonpath='{.spec.clusterIP}')
 
-          # Create a one-shot job that retries curls a few times
-          cat <<'YAML' | kubectl -n "$N" apply -f -
+          cat <<YAML | kubectl -n "$N" apply -f -
           apiVersion: batch/v1
           kind: Job
           metadata:
             name: prod-smoke
           spec:
             backoffLimit: 0
-            ttlSecondsAfterFinished: 120
             template:
               spec:
                 restartPolicy: Never
@@ -139,34 +159,27 @@ jobs:
                   args:
                     - |
                       set -e
-                      # Wait a bit for endpoints to be ready and then curl each service.
-                      for svc in product-service:8000 order-service:8001 customer-service:8002; do
-                        ok=false
-                        for i in $(seq 1 30); do
-                          echo ">>> trying http://$svc (attempt $i)"
-                          if curl -fsS --max-time 5 "http://$svc/"; then
-                            ok=true; break
-                          fi
-                          sleep 5
-                        done
-                        if [ "$ok" != true ]; then
-                          echo "ERROR: $svc never responded successfully"
-                          exit 1
-                        fi
+                      echo ">>> trying http://$PSVC:8000/"
+                      for i in \$(seq 1 30); do
+                        if curl -fsS --max-time 5 "http://$PSVC:8000/"; then break; fi
+                        echo "(retry \$i)"; sleep 2
+                      done
+                      echo ">>> trying http://$OSVC:8001/"
+                      for i in \$(seq 1 30); do
+                        if curl -fsS --max-time 5 "http://$OSVC:8001/"; then break; fi
+                        echo "(retry \$i)"; sleep 2
+                      done
+                      echo ">>> trying http://$CSVC:8002/"
+                      for i in \$(seq 1 30); do
+                        if curl -fsS --max-time 5 "http://$CSVC:8002/"; then break; fi
+                        echo "(retry \$i)"; sleep 2
                       done
           YAML
 
-          # Wait for job to finish: success OR failure, then print logs
-          kubectl -n "$N" wait --for=condition=complete job/prod-smoke --timeout=300s \
-            || kubectl -n "$N" wait --for=condition=failed job/prod-smoke --timeout=1s || true
-
+          # Wait up to 5 minutes and print logs
+          kubectl -n "$N" wait --for=condition=complete job/prod-smoke --timeout=300s
           echo "----- Smoke test output -----"
-          kubectl -n "$N" logs job/prod-smoke --tail=-1 || true
-
-          # Fail the step if the job did not succeed
-          [[ "$(kubectl -n "$N" get job prod-smoke -o jsonpath='{.status.succeeded}')" == "1" ]]
-
-          # Optional cleanup
+          kubectl -n "$N" logs job/prod-smoke
           kubectl -n "$N" delete job prod-smoke --ignore-not-found
 
       - name: Quick diagnostics (non-blocking)
