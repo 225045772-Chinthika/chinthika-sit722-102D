@@ -14,7 +14,7 @@ spec:
       containers:
       - name: product-service
         image: ${ACR_NAME}.azurecr.io/product-service:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
           - containerPort: 8000
         env:
@@ -43,9 +43,17 @@ spec:
 
         readinessProbe:
           httpGet:
-            path: /
+            path: /health   # or "/" if you don't have a /health yet
             port: 8000
-          initialDelaySeconds: 5
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 6
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 20
           periodSeconds: 10
           failureThreshold: 6
 ---
