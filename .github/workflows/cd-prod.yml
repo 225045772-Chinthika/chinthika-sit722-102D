@@ -40,10 +40,10 @@ jobs:
 
       - name: Set images to this commit
         run: |
-          kubectl set image deploy/product-deploy  -n sit722 product-service=${{ env.ACR }}/product-service:${{ github.sha }}
-          kubectl set image deploy/order-deploy    -n sit722 order-service=${{ env.ACR }}/order-service:${{ github.sha }}
-          kubectl set image deploy/customer-deploy -n sit722 customer-service=${{ env.ACR }}/customer-service:${{ github.sha }}
-          kubectl set image deploy/frontend-deploy -n sit722 frontend=${{ env.ACR }}/frontend:${{ github.sha }}
+          kubectl set image deploy/product-service  -n sit722 product-service=${{ env.ACR }}/product-service:${{ github.sha }}
+          kubectl set image deploy/order-service    -n sit722 order-service=${{ env.ACR }}/order-service:${{ github.sha }}
+          kubectl set image deploy/customer-service -n sit722 customer-service=${{ env.ACR }}/customer-service:${{ github.sha }}
+          kubectl set image deploy/frontend -n sit722 frontend=${{ env.ACR }}/frontend:${{ github.sha }}
 
       - name: Verify product endpoint (log first line)
         run: |

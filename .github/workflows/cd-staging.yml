@@ -108,6 +108,7 @@ jobs:
             test "$IMG" = "$expected"
           done
 
+
     # 2) Wait for product-service rollout (with self-heal fallback)
       # - name: Wait for product-service rollout (with self-heal)
       #   run: |
