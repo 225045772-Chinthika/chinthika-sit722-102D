@@ -5,11 +5,12 @@ metadata:
   namespace: sit722
 spec:
   type: ClusterIP
-  ports:
-    - port: 5432
-      targetPort: 5432
   selector:
     app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -19,14 +20,18 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: postgres }
+    matchLabels:
+      app: postgres
   template:
     metadata:
-      labels: { app: postgres }
+      labels:
+        app: postgres
     spec:
       containers:
         - name: postgres
-          image: postgres:15
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
           env:
             - name: POSTGRES_USER
               valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_USER } }
@@ -34,10 +39,9 @@ spec:
               valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_PASSWORD } }
             - name: POSTGRES_DB
               valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_DB } }
-          ports: [{ containerPort: 5432 }]
           volumeMounts:
-            - name: data
+            - name: pgdata
               mountPath: /var/lib/postgresql/data
       volumes:
-        - name: data
+        - name: pgdata
           emptyDir: {}
