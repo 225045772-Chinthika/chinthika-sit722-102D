@@ -137,7 +137,6 @@ jobs:
                       done
           YAML
 
-
           # Wait, print logs, and clean up
           kubectl -n "$N" wait --for=condition=complete job/prod-smoke --timeout=180s
           echo "----- Smoke test output -----"
