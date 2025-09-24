@@ -82,7 +82,7 @@ jobs:
             cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
             base="${cname%-service}"
             if [ "$cname" = "frontend" ]; then
-              repo="${ACR}/frontend:${HEAD_SHA}"
+              repo="${ACR}/frontend-service:${HEAD_SHA}"
             else
               repo="${ACR}/${base}-service:${HEAD_SHA}"
             fi
@@ -111,7 +111,7 @@ jobs:
             base="${cname%-service}"
 
             if [ "$base" = "frontend" ]; then
-              expected="${ACR}/frontend:${TAG}"
+              expected="${ACR}/frontend-service:${TAG}"
             else
               expected="${ACR}/${base}-service:${TAG}"
             fi
