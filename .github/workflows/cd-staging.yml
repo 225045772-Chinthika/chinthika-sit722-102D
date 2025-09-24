@@ -1,174 +1,174 @@
-# name: CD Stage 2 (Ephemeral Staging)
+name: CD Stage 2 (Ephemeral Staging)
 
-# on:
-#   workflow_run:
-#     workflows: ["CI Testing"]
-#     types: [completed]
-#     branches: [testing] 
+on:
+  workflow_run:
+    workflows: ["CI Testing"]
+    types: [completed]
+    branches: [testing] 
 
-# jobs:
-#   staging:
-#     if: ${{ github.event.workflow_run.conclusion == 'success' }}
-#     runs-on: ubuntu-latest
-#     outputs:
-#       rg:  ${{ steps.aks.outputs.RG }}
-#       aks: ${{ steps.aks.outputs.AKS }}
-#     env:
-#       ACR_NAME: ${{ secrets.ACR_NAME }}  
-#       AZURE_LOCATION: ${{ secrets.AZURE_LOCATION || 'australiaeast' }}
-#       NAME_PREFIX: sit722-${{ github.run_id }}
-#       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-#     steps:
-#       - uses: actions/checkout@v4
+jobs:
+  staging:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      rg:  ${{ steps.aks.outputs.RG }}
+      aks: ${{ steps.aks.outputs.AKS }}
+    env:
+      ACR_NAME: ${{ secrets.ACR_NAME }}  
+      AZURE_LOCATION: ${{ secrets.AZURE_LOCATION || 'australiaeast' }}
+      NAME_PREFIX: sit722-${{ github.run_id }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
 
-#       - name: Azure login
-#         uses: azure/login@v2
-#         with:
-#           creds: ${{ secrets.AZURE_CREDENTIALS }}  
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}  
 
-#       - name: Set up OpenTofu
-#         uses: opentofu/setup-opentofu@v1
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
 
-#       - name: Tofu init/plan/apply (create RG + AKS)
-#         working-directory: staging
-#         run: |
-#           tofu init
-#           tofu plan  -var "name_prefix=${NAME_PREFIX}" -var "location=${AZURE_LOCATION}" -out tf.plan
-#           tofu apply -auto-approve tf.plan
+      - name: Tofu init/plan/apply (create RG + AKS)
+        working-directory: staging
+        run: |
+          tofu init
+          tofu plan  -var "name_prefix=${NAME_PREFIX}" -var "location=${AZURE_LOCATION}" -out tf.plan
+          tofu apply -auto-approve tf.plan
 
-#       - name: Get AKS details & attach ACR pull permissions
-#         id: aks
-#         working-directory: staging
-#         run: |
-#           RG=$(tofu output -raw rg_name)
-#           AKS=$(tofu output -raw aks_name)
-#           echo "RG=$RG"   >> $GITHUB_OUTPUT
-#           echo "AKS=$AKS" >> $GITHUB_OUTPUT
+      - name: Get AKS details & attach ACR pull permissions
+        id: aks
+        working-directory: staging
+        run: |
+          RG=$(tofu output -raw rg_name)
+          AKS=$(tofu output -raw aks_name)
+          echo "RG=$RG"   >> $GITHUB_OUTPUT
+          echo "AKS=$AKS" >> $GITHUB_OUTPUT
 
-#           # allow the cluster MSI to pull from your ACR
-#           az aks update -g "$RG" -n "$AKS" --attach-acr "$ACR_NAME"
+          # allow the cluster MSI to pull from your ACR
+          az aks update -g "$RG" -n "$AKS" --attach-acr "$ACR_NAME"
 
-#           # kubeconfig
-#           az aks get-credentials -g "$RG" -n "$AKS" --overwrite-existing
+          # kubeconfig
+          az aks get-credentials -g "$RG" -n "$AKS" --overwrite-existing
 
-#       - name: Deploy Kubernetes manifests
-#         run: |
-#           # ensure namespace exists
-#           kubectl create namespace sit722 || true
+      - name: Deploy Kubernetes manifests
+        run: |
+          # ensure namespace exists
+          kubectl create namespace sit722 || true
 
-#           # apply your manifests (services, deployments, etc.)
-#           kubectl apply -f k8s/ -n sit722
+          # apply your manifests (services, deployments, etc.)
+          kubectl apply -f k8s/ -n sit722
 
-#       - name: Create DBs (orders, customers)
-#         run: |
-#           kubectl apply -f k8s/postgres-initjob.yaml -n sit722
-#           kubectl wait --for=condition=complete job/postgres-init -n sit722 --timeout=180s
-#           kubectl logs job/postgres-init -n sit722 || true
+      - name: Create DBs (orders, customers)
+        run: |
+          kubectl apply -f k8s/postgres-initjob.yaml -n sit722
+          kubectl wait --for=condition=complete job/postgres-init -n sit722 --timeout=180s
+          kubectl logs job/postgres-init -n sit722 || true
 
-#       - name: Set images (auto-detect; handle frontend)
-#         run: |
-#           set -euo pipefail
-#           ACR="${ACR_NAME}.azurecr.io"
-#           for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
-#             cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
-#             base="${cname%-service}"
-#             if [ "$base" = "frontend" ]; then
-#               repo="${ACR}/frontend:${HEAD_SHA}"
-#             else
-#               repo="${ACR}/${base}-service:${HEAD_SHA}"
-#             fi
-#             echo "Setting $d container=$cname -> $repo"
-#             kubectl -n sit722 set image deploy/$d $cname=$repo --record
-#           done        
+      - name: Set images (auto-detect; handle frontend)
+        run: |
+          set -euo pipefail
+          ACR="${ACR_NAME}.azurecr.io"
+          for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
+            base="${cname%-service}"
+            if [ "$base" = "frontend" ]; then
+              repo="${ACR}/frontend:${HEAD_SHA}"
+            else
+              repo="${ACR}/${base}-service:${HEAD_SHA}"
+            fi
+            echo "Setting $d container=$cname -> $repo"
+            kubectl -n sit722 set image deploy/$d $cname=$repo --record
+          done        
 
-#       - name: Debug — list what is running
-#         run: |
-#           echo "== Deployments =="
-#           kubectl get deploy -n sit722 -o wide || true
-#           echo "== Services =="
-#           kubectl get svc -n sit722 -o wide || true
-#           echo "== Pods =="
-#           kubectl get pods -n sit722 -o wide || true
+      - name: Debug — list what is running
+        run: |
+          echo "== Deployments =="
+          kubectl get deploy -n sit722 -o wide || true
+          echo "== Services =="
+          kubectl get svc -n sit722 -o wide || true
+          echo "== Pods =="
+          kubectl get pods -n sit722 -o wide || true
 
-#       # 1) Prove the correct image tag is running
-#       - name: Verify images are the commit tag on each deployment
-#         run: |
-#           set -euo pipefail
-#           ACR="${ACR_NAME}.azurecr.io"
-#           TAG="${HEAD_SHA}"
-#           for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
-#             cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
-#             IMG=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].image}')
-#             base="${cname%-service}"
+      # 1) Prove the correct image tag is running
+      - name: Verify images are the commit tag on each deployment
+        run: |
+          set -euo pipefail
+          ACR="${ACR_NAME}.azurecr.io"
+          TAG="${HEAD_SHA}"
+          for d in $(kubectl get deploy -n sit722 -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); do
+            cname=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].name}')
+            IMG=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].image}')
+            base="${cname%-service}"
 
-#             if [ "$base" = "frontend" ]; then
-#               expected="${ACR}/frontend:${TAG}"
-#             else
-#               expected="${ACR}/${base}-service:${TAG}"
-#             fi
+            if [ "$base" = "frontend" ]; then
+              expected="${ACR}/frontend:${TAG}"
+            else
+              expected="${ACR}/${base}-service:${TAG}"
+            fi
 
-#             echo "$d container=$cname -> $IMG (expected $expected)"
-#             test "$IMG" = "$expected"
-#           done
+            echo "$d container=$cname -> $IMG (expected $expected)"
+            test "$IMG" = "$expected"
+          done
 
-#     # 2) Wait for product-service rollout (with self-heal fallback) 
-#       - name: Wait for product-service rollout (best-effort)
-#         run: |
-#           kubectl rollout status deploy/product-service -n sit722 --timeout=600s \
-#             || echo "::warning:: rollout timed out; continuing to manual test"
+    # 2) Wait for product-service rollout (with self-heal fallback) 
+      - name: Wait for product-service rollout (best-effort)
+        run: |
+          kubectl rollout status deploy/product-service -n sit722 --timeout=600s \
+            || echo "::warning:: rollout timed out; continuing to manual test"
 
-#       - name: Show staging URLs to test
-#         run: |
-#           for s in product-service order-service customer-service; do
-#             ip=$(kubectl get svc $s -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-#             port=$(kubectl get svc $s -n sit722 -o jsonpath='{.spec.ports[0].port}')
-#             echo "$s => http://$ip:$port/"
-#           done
-#           ipf=$(kubectl get svc frontend -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-#           echo "frontend => http://$ipf/"
+      - name: Show staging URLs to test
+        run: |
+          for s in product-service order-service customer-service; do
+            ip=$(kubectl get svc $s -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            port=$(kubectl get svc $s -n sit722 -o jsonpath='{.spec.ports[0].port}')
+            echo "$s => http://$ip:$port/"
+          done
+          ipf=$(kubectl get svc frontend -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "frontend => http://$ipf/"
 
-#       # 3) Get a public IP and curl the service (acceptance test)
-#       # - name: Smoke test product-service
-#       #   continue-on-error: true
-#       #   run: |
-#       #     SVC=product-service
-#       #     for i in {1..30}; do
-#       #       IP=$(kubectl get svc $SVC -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-#       #       [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
-#       #     done
-#       #     PORT=$(kubectl get svc $SVC -n sit722 -o jsonpath='{.spec.ports[0].port}')
-#       #     echo "Testing http://$IP:$PORT/"
-#       #     test -n "$IP" && curl -s --retry 10 --retry-delay 6 "http://$IP:$PORT/" | grep -i "Welcome"
+      # 3) Get a public IP and curl the service (acceptance test)
+      # - name: Smoke test product-service
+      #   continue-on-error: true
+      #   run: |
+      #     SVC=product-service
+      #     for i in {1..30}; do
+      #       IP=$(kubectl get svc $SVC -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+      #       [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
+      #     done
+      #     PORT=$(kubectl get svc $SVC -n sit722 -o jsonpath='{.spec.ports[0].port}')
+      #     echo "Testing http://$IP:$PORT/"
+      #     test -n "$IP" && curl -s --retry 10 --retry-delay 6 "http://$IP:$PORT/" | grep -i "Welcome"
 
-#       # - name: Smoke test frontend
-#       #   continue-on-error: true
-#       #   run: |
-#       #     for i in {1..30}; do
-#       #       IP=$(kubectl get svc frontend -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-#       #       [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
-#       #     done
-#       #     test -n "$IP"
-#       #     curl -s --retry 10 --retry-delay 6 "http://${IP}/" | grep -i "E-commerce"
+      # - name: Smoke test frontend
+      #   continue-on-error: true
+      #   run: |
+      #     for i in {1..30}; do
+      #       IP=$(kubectl get svc frontend -n sit722 -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+      #       [ -n "$IP" ] && break || echo "waiting for LB IP..." && sleep 10
+      #     done
+      #     test -n "$IP"
+      #     curl -s --retry 10 --retry-delay 6 "http://${IP}/" | grep -i "E-commerce"
 
-#   approval:
-#     needs: staging
-#     runs-on: ubuntu-latest
-#     environment: staging-approval
-#     steps:
-#       - run: echo "Click 'Review deployments' and Approve when manual testing in the Portal is completed."
+  approval:
+    needs: staging
+    runs-on: ubuntu-latest
+    environment: staging-approval
+    steps:
+      - run: echo "Click 'Review deployments' and Approve when manual testing in the Portal is completed."
 
-#   cleanup:
-#     needs: [staging, approval]
-#     if: ${{ always() }}
-#     runs-on: ubuntu-latest
-#     steps:
-#       - name: Azure login
-#         uses: azure/login@v2
-#         with:
-#           creds: ${{ secrets.AZURE_CREDENTIALS }}
-#       - name: Delete staging resource group
-#         env:
-#           RG: ${{ needs.staging.outputs.rg }}
-#         run: |
-#           echo "Deleting RG: $RG"
-#           az group delete -n "$RG" --yes --no-wait
+  cleanup:
+    needs: [staging, approval]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Delete staging resource group
+        env:
+          RG: ${{ needs.staging.outputs.rg }}
+        run: |
+          echo "Deleting RG: $RG"
+          az group delete -n "$RG" --yes --no-wait
