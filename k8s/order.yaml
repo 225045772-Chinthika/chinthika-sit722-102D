@@ -15,35 +15,54 @@ spec:
       - name: order-service
         image: ${ACR_NAME}.azurecr.io/order-service:latest
         imagePullPolicy: IfNotPresent
-        ports: [{ containerPort: 8000 }]
+        ports:
+          - containerPort: 8001
         env:
-        - name: AZURE_STORAGE_ACCOUNT_NAME
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: AZURE_STORAGE_ACCOUNT_NAME
-        - name: AZURE_STORAGE_CONTAINER
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: AZURE_STORAGE_CONTAINER
-        - name: AZURE_STORAGE_ACCOUNT_KEY
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: AZURE_STORAGE_ACCOUNT_KEY
-        - name: DATABASE_URL
-          value: postgresql://postgres:postgres@postgres:5432/orders
-        - name: POSTGRES_HOST
-          value: postgres
-        - name: POSTGRES_PORT
-          value: "5432"
-        - name: POSTGRES_DB
-          value: orders
-        - name: POSTGRES_USER
-          valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_USER } }
-        - name: POSTGRES_PASSWORD
-          valueFrom: { secretKeyRef: { name: pg-secret, key: POSTGRES_PASSWORD } }          
+          - name: PORT
+            value: "8001"
+
+          - name: AZURE_STORAGE_ACCOUNT_NAME
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: AZURE_STORAGE_ACCOUNT_NAME
+          - name: AZURE_STORAGE_CONTAINER
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: AZURE_STORAGE_CONTAINER
+          - name: AZURE_STORAGE_ACCOUNT_KEY
+            valueFrom:
+              secretKeyRef:
+                name: app-secrets
+                key: AZURE_STORAGE_ACCOUNT_KEY
+
+          - name: DATABASE_URL
+            value: postgresql://postgres:postgres@postgres:5432/orders
+          - name: POSTGRES_HOST
+            value: postgres
+          - name: POSTGRES_PORT
+            value: "5432"
+          - name: POSTGRES_DB
+            value: orders
+          - name: POSTGRES_USER
+            valueFrom:
+              secretKeyRef:
+                name: pg-secret
+                key: POSTGRES_USER
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: pg-secret
+                key: POSTGRES_PASSWORD
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8001
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 6
 ---
 apiVersion: v1
 kind: Service
@@ -55,4 +74,4 @@ spec:
   selector: { app: order-svc }
   ports:
     - port: 8001
-      targetPort: 8000
+      targetPort: 8001
