@@ -84,7 +84,7 @@ jobs:
             if [ "$cname" = "frontend" ]; then
               repo="${ACR}/frontend:${HEAD_SHA}"
             else
-              repo="${ACR}/${cname}:${HEAD_SHA}"
+              repo="${ACR}/${base}-service:${HEAD_SHA}"
             fi
             echo "Setting $d container=$cname -> $repo"
             kubectl -n sit722 set image deploy/$d $cname=$repo --record
@@ -110,10 +110,10 @@ jobs:
             IMG=$(kubectl get deploy/$d -n sit722 -o jsonpath='{.spec.template.spec.containers[0].image}')
             base="${cname%-service}"
 
-            if [ "$cname" = "frontend" ]; then
+            if [ "$base" = "frontend" ]; then
               expected="${ACR}/frontend:${TAG}"
             else
-              expected="${ACR}/${cname}:${TAG}"
+              expected="${ACR}/${base}-service:${TAG}"
             fi
 
             echo "$d container=$cname -> $IMG (expected $expected)"
